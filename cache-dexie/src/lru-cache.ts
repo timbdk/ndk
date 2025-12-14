@@ -133,7 +133,7 @@ export class CacheHandler<T> {
         this.dirtyKeys.add(key);
     }
 
-    private async dump() {
+    public async dump() {
         if (this.dirtyKeys.size > 0 && this.cache) {
             await this.options.dump(this.dirtyKeys, this.cache);
             this.dirtyKeys.clear();
