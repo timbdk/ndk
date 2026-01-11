@@ -650,6 +650,20 @@ export default class NDKCacheAdapterDexie implements NDKCacheAdapter {
             console.error(`[cache-dexie] Error adding decrypted event for wrapper ${wrapperId}:`, e);
         }
     }
+    /**
+     * Force write all dirty keys to the database
+     */
+    public async flush(): Promise<void> {
+        await Promise.all([
+            this.profiles?.dump(),
+            this.zappers?.dump(),
+            this.nip05s?.dump(),
+            this.events?.dump(),
+            this.eventTags?.dump(),
+            this.relayInfo?.dump(),
+            this.unpublishedEvents?.dump(),
+        ]);
+    }
 }
 
 export function foundEvents(subscription: NDKSubscription, events: Event[], filter?: NDKFilter) {
