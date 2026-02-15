@@ -1,4 +1,5 @@
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils";
+import { schnorr } from "@noble/curves/secp256k1";
 import type { UnsignedEvent } from "nostr-tools";
 import { finalizeEvent, generateSecretKey, getPublicKey, nip04, nip19, nip44 } from "nostr-tools";
 import * as nip49 from "nostr-tools/nip49";
@@ -166,6 +167,10 @@ export class NDKPrivateKeySigner implements NDKSigner {
     public async sign(event: NostrEvent): Promise<string> {
         if (!this._privateKey) {
             throw Error("Attempted to sign without a private key");
+        }
+
+        if (event.id) {
+            return bytesToHex(schnorr.sign(event.id, this._privateKey));
         }
 
         return finalizeEvent(event as UnsignedEvent, this._privateKey).sig;

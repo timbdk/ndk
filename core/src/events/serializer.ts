@@ -71,10 +71,22 @@ function validateForSerialization(event: NDKEvent | NostrEvent): void {
  * @param this - The event object to serialize.
  * @returns A string representation of the serialized event.
  */
+
+function getSerializationPrefix(): number {
+    const prefix = (globalThis as any).VERITY_SERIALIZATION_PREFIX;
+    if (prefix === undefined || prefix === null) {
+        throw new Error(
+            "VERITY_SERIALIZATION_PREFIX is not configured. " +
+            "Set globalThis.VERITY_SERIALIZATION_PREFIX before creating events.",
+        );
+    }
+    return Number(prefix);
+}
+
 export function serialize(this: NDKEvent | NostrEvent, includeSig = false, includeId = false): NDKEventSerialized {
     validateForSerialization(this);
 
-    const payload = [0, this.pubkey, this.created_at, this.kind, this.tags, this.content];
+    const payload = [getSerializationPrefix(), this.pubkey, this.created_at, this.kind, this.tags, this.content];
     if (includeSig) payload.push(this.sig);
     if (includeId) payload.push(this.id);
     return JSON.stringify(payload);
