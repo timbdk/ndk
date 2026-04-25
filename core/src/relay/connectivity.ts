@@ -516,8 +516,17 @@ export class NDKRelayConnectivity {
     /**
      * Handles an authentication request from the NDK relay.
      *
-     * If an authentication policy is configured, it will be used to authenticate the connection.
-     * Otherwise, the `auth` event will be emitted to allow the application to handle the authentication.
+     * [VERITY PATCH] Fixed status lifecycle for NDKEvent auth responses.
+     * Upstream bug: when authPolicy returns an NDKEvent (the signIn() path),
+     * this.auth(res) correctly sends the AUTH event to the relay, but the code
+     * then falls through to `this._status = CONNECTED` before the relay's OK
+     * response arrives. The authenticate() function — which properly sets
+     * AUTHENTICATED status — is only invoked when `res === true`, never for
+     * NDKEvent results. This means signIn() never reached AUTHENTICATED.
+     *
+     * Fix: await the auth() promise in the NDKEvent branch and promote status
+     * to AUTHENTICATED on success, then return early to skip the fallthrough.
+     * The `res === true` path (deferred signer) is left unchanged.
      *
      * @param challenge - The authentication challenge provided by the NDK relay.
      */
@@ -548,10 +557,25 @@ export class NDKRelayConnectivity {
                 this.debug("Authentication policy returned", !!res);
 
                 if (res instanceof NDKEvent || res === true) {
+                    // [VERITY PATCH] NDKEvent branch: send AUTH and await relay confirmation.
+                    // Upstream sent the event but then immediately reset status to CONNECTED.
                     if (res instanceof NDKEvent) {
-                        await this.auth(res);
+                        try {
+                            await this.auth(res);
+                            this._status = NDKRelayStatus.AUTHENTICATED;
+                            this.ndkRelay.emit("authed");
+                            this.debug("Authentication successful (NDKEvent path)");
+                            this.retryPendingAuthPublishes();
+                        } catch (e) {
+                            this._status = NDKRelayStatus.AUTH_REQUESTED;
+                            this.ndkRelay.emit("auth:failed", e as Error);
+                            this.debug("Authentication failed (NDKEvent path)", e);
+                            this.rejectPendingAuthPublishes(e as Error);
+                        }
+                        return;
                     }
 
+                    // res === true branch: deferred signer — unchanged from upstream.
                     const authenticate = async () => {
                         if (this._status >= NDKRelayStatus.CONNECTED && this._status < NDKRelayStatus.AUTHENTICATED) {
                             const event = new NDKEvent(this.ndk);
@@ -579,19 +603,14 @@ export class NDKRelayConnectivity {
                         }
                     };
 
-                    if (res === true) {
-                        if (!this.ndk?.signer) {
-                            this.debug("No signer available for authentication localhost");
-                            this.ndk?.once("signer:ready", authenticate);
-                        } else {
-                            authenticate().catch((e) => {
-                                console.error("Error authenticating", e);
-                            });
-                        }
+                    if (!this.ndk?.signer) {
+                        this.debug("No signer available for authentication");
+                        this.ndk?.once("signer:ready", authenticate);
+                    } else {
+                        authenticate().catch((e) => {
+                            console.error("Error authenticating", e);
+                        });
                     }
-
-                    this._status = NDKRelayStatus.CONNECTED;
-                    this.ndkRelay.emit("authed");
                 }
             }
         } else {

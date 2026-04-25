@@ -506,7 +506,7 @@ export class NDKPool extends EventEmitter<{
 
         for (const relay of this.relays.values()) {
             stats.total++;
-            if (relay.status === NDKRelayStatus.CONNECTED) {
+            if (relay.status >= NDKRelayStatus.CONNECTED) {
                 stats.connected++;
             } else if (relay.status === NDKRelayStatus.DISCONNECTED) {
                 stats.disconnected++;
