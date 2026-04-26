@@ -69,8 +69,10 @@ export class NDKRelayConnectivity {
      * Sets up keepalive, WebSocket state monitoring, and sleep detection
      */
     private setupMonitoring(): void {
-        // Setup keepalive to detect silent relays
-        this.keepalive = new NDKRelayKeepalive(120000, async () => {
+        // Setup keepalive to detect silent relays.
+        // 30s threshold ensures probes fire before Nginx's proxy_read_timeout (default 60s)
+        // silently closes the TCP connection without a WebSocket close frame.
+        this.keepalive = new NDKRelayKeepalive(30000, async () => {
             this.debug("Relay silence detected, probing connection");
             const isAlive = await probeRelayConnection({
                 send: (msg: any[]) => this.send(JSON.stringify(msg)),
@@ -94,9 +96,12 @@ export class NDKRelayConnectivity {
             }
         });
 
-        // Monitor WebSocket readyState every 5 seconds
+        // Monitor WebSocket readyState every 5 seconds.
+        // Use >= CONNECTED to cover CONNECTED and AUTHENTICATED states:
+        // without this, a silent TCP drop after successful auth goes undetected
+        // until the next keepalive probe.
         this.wsStateMonitor = setInterval(() => {
-            if (this._status === NDKRelayStatus.CONNECTED) {
+            if (this._status >= NDKRelayStatus.CONNECTED) {
                 if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
                     this.debug("WebSocket died silently, reconnecting");
                     this.handleStaleConnection();
