@@ -153,6 +153,7 @@ export class NDKNostrRpc extends EventEmitter {
         result: string,
         kind = NDKKind.NostrConnect,
         error?: string,
+        extraTags?: string[][],
     ): Promise<void> {
         const res = { id, result } as NDKRpcResponse;
         if (error) {
@@ -161,10 +162,14 @@ export class NDKNostrRpc extends EventEmitter {
 
         const localUser = await this.signer.user();
         const remoteUser = this.ndk.getUser({ pubkey: remotePubkey });
+        const tags: string[][] = [["p", remotePubkey]];
+        if (extraTags) {
+            tags.push(...extraTags);
+        }
         const event = new NDKEvent(this.ndk, {
             kind,
             content: JSON.stringify(res),
-            tags: [["p", remotePubkey]],
+            tags,
             pubkey: localUser.pubkey,
         } as NostrEvent);
 

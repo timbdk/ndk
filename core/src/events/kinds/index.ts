@@ -172,6 +172,8 @@ export enum NDKKind {
     NostrWalletConnectRes = 23195,
 
     NostrConnect = 24133,
+    AdminCommand = 24134,
+    AdminResponse = 24135,
 
     BlossomUpload = 24242,
 
