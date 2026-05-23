@@ -162,7 +162,10 @@ export class NDKNostrRpc extends EventEmitter {
 
         const localUser = await this.signer.user();
         const remoteUser = this.ndk.getUser({ pubkey: remotePubkey });
-        const tags: string[][] = [["p", remotePubkey]];
+        const tags: string[][] = [
+            ["p", remotePubkey],
+            ["policy", "allow", "user", remotePubkey],
+        ];
         if (extraTags) {
             tags.push(...extraTags);
         }
@@ -213,7 +216,10 @@ export class NDKNostrRpc extends EventEmitter {
         const event = new NDKEvent(this.ndk, {
             kind,
             content: JSON.stringify(request),
-            tags: [["p", remotePubkey]],
+            tags: [
+                ["p", remotePubkey],
+                ["policy", "allow", "user", remotePubkey],
+            ],
             pubkey: localUser.pubkey,
         } as NostrEvent);
 
