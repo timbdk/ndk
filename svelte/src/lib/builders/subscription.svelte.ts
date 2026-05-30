@@ -4,6 +4,7 @@ import type {
   NDKSubscription,
   NDKSubscriptionOptions,
 } from "@nostr-dev-kit/ndk";
+import { wrapEvent } from "@nostr-dev-kit/ndk";
 import { NDKSync, type SyncAndSubscribeOptions } from "@nostr-dev-kit/sync";
 import type { WoTFilterOptions, WoTRankOptions } from "@nostr-dev-kit/wot";
 import type { NDKSvelte } from "../ndk-svelte.svelte.js";
@@ -226,6 +227,25 @@ function createSubscriptionInternal<T extends NDKEvent = NDKEvent>(
     // Else: timer already scheduled, just accumulate events
   }
 
+  function processCachedEvent(event: NDKEvent) {
+    const wrapperOpts = derivedWrapperOpts;
+    const key = dedupeKey(event as T);
+
+    // Skip if we already have this event (unless noDedupe)
+    if (!wrapperOpts.noDedupe && eventMap.has(key)) {
+      const existing = eventMap.get(key);
+      if (existing) {
+        const existingTime = existing.created_at || 0;
+        const newTime = event.created_at || 0;
+        if (existingTime >= newTime) {
+          return;
+        }
+      }
+    }
+
+    eventMap.set(key, event as T);
+  }
+
   function updateEvents() {
     const wrapperOpts = derivedWrapperOpts;
     let events = Array.from(eventMap.values());
@@ -290,26 +310,14 @@ function createSubscriptionInternal<T extends NDKEvent = NDKEvent>(
     const result = subscribeMethod(currentFilters, {
       ...currentNdkOpts,
       closeOnEose: false,
+      wrap: true,
       onEvents: (cachedEvents: NDKEvent[]) => {
-        // Batch process all cached events at once
+        // Wrap each cached event through wrapEvent() to get rich EDM models.
+        // The onEvents path bypasses NDK's emitEvent(), so wrapping doesn't
+        // happen automatically here — we must do it explicitly.
         for (const event of cachedEvents) {
-          const wrapperOpts = derivedWrapperOpts;
-          const key = dedupeKey(event as T);
-
-          // Skip if we already have this event (unless noDedupe)
-          if (!wrapperOpts.noDedupe && eventMap.has(key)) {
-            const existing = eventMap.get(key);
-            if (existing) {
-              // Keep the newer one (default to 0 if created_at is missing)
-              const existingTime = existing.created_at || 0;
-              const newTime = event.created_at || 0;
-              if (existingTime >= newTime) {
-                continue;
-              }
-            }
-          }
-
-          eventMap.set(key, event as T);
+          const wrapped = wrapEvent(event);
+          processCachedEvent(wrapped as T);
         }
 
         // Call updateEvents ONCE for all cached events
