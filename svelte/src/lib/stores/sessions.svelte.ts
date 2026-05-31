@@ -1,11 +1,12 @@
-import type {
-  Hexpubkey,
-  NDKEvent,
-  NDKKind,
-  NDKSigner,
-  NDKUser,
-  NDKUserProfile,
-  NDKPrivateKeySigner,
+import {
+  NDKNip46Signer,
+  type Hexpubkey,
+  type NDKEvent,
+  type NDKKind,
+  type NDKSigner,
+  type NDKUser,
+  type NDKUserProfile,
+  type NDKPrivateKeySigner,
 } from "@nostr-dev-kit/ndk";
 import { NDKKind as Kind } from "@nostr-dev-kit/ndk";
 import type {
@@ -50,10 +51,20 @@ export class ReactiveSessionsStore {
       if (state.activePubkey) {
         const signer = state.signers.get(state.activePubkey);
         if (signer && state.ndk) {
-          state.ndk.signer = signer;
+          // Don't overwrite a NIP-46 signer with a direct-key signer.
+          // NIP-46 signers are set externally by connectToRemoteSigner() and
+          // bypass the session manager's internal signers Map. Overwriting
+          // would break remote signing.
+          const currentSigner = state.ndk.signer;
+          const isCurrentNip46 = currentSigner instanceof NDKNip46Signer;
+          if (!isCurrentNip46) {
+            state.ndk.signer = signer;
+          }
         }
-      } else if (state.ndk) {
-        // Clear signer and activeUser when no active session
+      } else if (state.ndk && !state.ndk.signer) {
+        // Only clear signer when no active session AND no externally-set signer.
+        // If ndk.signer was set by connectToRemoteSigner() (NIP-46), don't clear it —
+        // the remote signer handles signing for this session.
         state.ndk.signer = undefined;
         state.ndk.activeUser = undefined;
       }
