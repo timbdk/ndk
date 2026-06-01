@@ -30,7 +30,7 @@
     "README.md"
   ],
   "scripts": {
-    "dev": "vite dev",
+    "dev": "svelte-package -w",
     "dev:package": "svelte-package -w",
     "build": "svelte-package",
     "build:package": "svelte-package",
