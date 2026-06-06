@@ -65,7 +65,11 @@ export async function getUnpublishedEvents(
 
 export function addUnpublishedEvent(this: NDKCacheAdapterDexie, event: NDKEvent, relays: WebSocket["url"][]): void {
     const r: UnpublishedEvent["relays"] = {};
-    relays.forEach((url) => (r[url] = false));
+    relays.forEach((url) => {
+        if (url && url !== "undefined") {
+            r[url] = false;
+        }
+    });
     this.unpublishedEvents.set(event.id!, { id: event.id, event: event.rawEvent(), relays: r });
 
     // Also store in main events table with relay = undefined
@@ -74,17 +78,23 @@ export function addUnpublishedEvent(this: NDKCacheAdapterDexie, event: NDKEvent,
         console.error('[addUnpublishedEvent] Failed to store event in main table:', e);
     });
 
-    const onPublished = (relay: NDKRelay) => {
-        const url = relay.url;
+    const onPublished = (relayOrResult: any) => {
+        const publishedRelays = relayOrResult?.publishedToRelays instanceof Set
+            ? Array.from(relayOrResult.publishedToRelays) as NDKRelay[]
+            : [relayOrResult as NDKRelay];
 
         const existingEntry = this.unpublishedEvents.get(event.id);
 
         if (!existingEntry) {
-            event.off("publushed", onPublished);
+            event.off("published", onPublished);
             return;
         }
 
-        existingEntry.relays[url] = true;
+        publishedRelays.forEach((r) => {
+            if (r && r.url) {
+                existingEntry.relays[r.url] = true;
+            }
+        });
         this.unpublishedEvents.set(event.id, existingEntry);
 
         const successWrites = Object.values(existingEntry.relays).filter((v) => v).length;
