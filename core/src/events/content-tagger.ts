@@ -118,7 +118,7 @@ export async function generateContentTags(
         return { content, tags };
     }
 
-    const tagRegex = /verity:(npub|nprofile|note|nevent|naddr)[a-zA-Z0-9]+/g;
+    const tagRegex = /(@|nostr:)(npub|nprofile|note|nevent|naddr)[a-zA-Z0-9]+/g;
 
     const promises: Promise<void>[] = [];
 
@@ -130,7 +130,7 @@ export async function generateContentTags(
 
     content = content.replace(tagRegex, (tag) => {
         try {
-            const entity = tag.split("verity:")[1];
+            const entity = tag.split(/(@|nostr:)/)[2];
             const { type, data } = nip19.decode(entity);
             let t: NDKTag | undefined;
 
@@ -159,9 +159,9 @@ export async function generateContentTags(
                 case "note":
                     promises.push(
                         new Promise(async (resolve) => {
-                             const relay = await maybeGetEventRelayUrl(entity);
-                             addTagIfNew(["q", data, relay]);
-                             resolve();
+                            const relay = await maybeGetEventRelayUrl(entity);
+                            addTagIfNew(["q", data, relay]);
+                            resolve();
                         }),
                     );
                     break;
@@ -209,7 +209,7 @@ export async function generateContentTags(
 
             if (t) addTagIfNew(t);
 
-            return `verity:${entity}`;
+            return `nostr:${entity}`;
         } catch (_error) {
             return tag;
         }
