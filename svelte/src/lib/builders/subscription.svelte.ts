@@ -156,11 +156,20 @@ function createSubscriptionInternal<T extends NDKEvent = NDKEvent>(
     };
   });
 
-  const dedupeKey = $derived.by(() => {
-    return (
-      derivedWrapperOpts.dedupeKey ?? ((e: NDKEvent) => e.deduplicationKey())
-    );
-  });
+  function getDedupeKey(event: NDKEvent): string {
+    const customFn = derivedWrapperOpts?.dedupeKey;
+    if (typeof customFn === "function") {
+      try {
+        return customFn(event);
+      } catch {}
+    }
+    if (typeof event?.deduplicationKey === "function") {
+      try {
+        return event.deduplicationKey();
+      } catch {}
+    }
+    return (event as any)?.id ?? `${event?.kind}:${event?.pubkey}`;
+  }
 
   // Restart subscription when filters or NDK options change
   $effect(() => {
@@ -188,8 +197,9 @@ function createSubscriptionInternal<T extends NDKEvent = NDKEvent>(
   let lastUpdateTime = 0;
 
   function handleEvent(event: NDKEvent) {
+    const wrapped = typeof wrapEvent === 'function' ? wrapEvent(event) : event;
     const wrapperOpts = derivedWrapperOpts;
-    const key = dedupeKey(event as T);
+    const key = getDedupeKey(wrapped as T);
 
     // Skip if we already have this event (unless noDedupe)
     if (!wrapperOpts.noDedupe && eventMap.has(key)) {
@@ -197,14 +207,14 @@ function createSubscriptionInternal<T extends NDKEvent = NDKEvent>(
       if (existing) {
         // Keep the newer one (default to 0 if created_at is missing)
         const existingTime = existing.created_at || 0;
-        const newTime = event.created_at || 0;
+        const newTime = wrapped.created_at || 0;
         if (existingTime >= newTime) {
           return;
         }
       }
     }
 
-    eventMap.set(key, event as T);
+    eventMap.set(key, wrapped as T);
 
     // Throttle updateEvents to batch multiple rapid relay events
     // Update at most once per 16ms (~1 frame at 60fps)
@@ -229,7 +239,7 @@ function createSubscriptionInternal<T extends NDKEvent = NDKEvent>(
 
   function processCachedEvent(event: NDKEvent) {
     const wrapperOpts = derivedWrapperOpts;
-    const key = dedupeKey(event as T);
+    const key = getDedupeKey(event as T);
 
     // Skip if we already have this event (unless noDedupe)
     if (!wrapperOpts.noDedupe && eventMap.has(key)) {
@@ -316,16 +326,27 @@ function createSubscriptionInternal<T extends NDKEvent = NDKEvent>(
         // The onEvents path bypasses NDK's emitEvent(), so wrapping doesn't
         // happen automatically here — we must do it explicitly.
         for (const event of cachedEvents) {
-          const wrapped = wrapEvent(event);
+          const wrapped = typeof wrapEvent === 'function' ? wrapEvent(event) : event;
           processCachedEvent(wrapped as T);
         }
 
         // Call updateEvents ONCE for all cached events
         updateEvents();
+        if (typeof (currentNdkOpts as any)?.onEvents === 'function') {
+          (currentNdkOpts as any).onEvents(cachedEvents);
+        }
       },
-      onEvent: handleEvent,
+      onEvent: (event: NDKEvent) => {
+        handleEvent(event);
+        if (typeof (currentNdkOpts as any)?.onEvent === 'function') {
+          (currentNdkOpts as any).onEvent(event);
+        }
+      },
       onEose: () => {
         _eosed = true;
+        if (typeof (currentNdkOpts as any)?.onEose === 'function') {
+          (currentNdkOpts as any).onEose();
+        }
       },
     });
 

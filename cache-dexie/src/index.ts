@@ -14,8 +14,30 @@ import type {
     ProfilePointer,
 } from "@nostr-dev-kit/ndk";
 import { deserialize, NDKEvent, type NDKRelay, profileFromEvent } from "@nostr-dev-kit/ndk";
+
+function matchFilter(filter: NDKFilter, event: any): boolean {
+    if (filter.ids && filter.ids.indexOf(event.id) === -1) return false;
+    if (filter.kinds && filter.kinds.indexOf(event.kind) === -1) return false;
+    if (filter.authors && filter.authors.indexOf(event.pubkey) === -1) return false;
+    for (const f of Object.keys(filter)) {
+        if (f[0] === "#") {
+            const tagName = f.slice(1);
+            if (tagName === "t") {
+                const values = filter[`#${tagName}`]?.map((v: string) => v.toLowerCase());
+                if (values && !event.tags?.find(([t, v]: [string, string]) => t === tagName && values.indexOf(v.toLowerCase()) !== -1))
+                    return false;
+            } else {
+                const values = filter[`#${tagName}`];
+                if (values && !event.tags?.find(([t, v]: [string, string]) => t === tagName && values.indexOf(v) !== -1))
+                    return false;
+            }
+        }
+    }
+    if (filter.since && event.created_at < filter.since) return false;
+    if (filter.until && event.created_at > filter.until) return false;
+    return true;
+}
 import createDebug from "debug";
-import { matchFilter } from "nostr-tools";
 import { DexieCacheModuleManager } from "./cache-module.js";
 import { type EventTagCacheEntry, eventTagsDump, eventTagsWarmUp } from "./caches/event-tags.js";
 import { type EventCacheEntry, eventsDump, eventsWarmUp } from "./caches/events.js";
@@ -693,7 +715,7 @@ export function foundEvent(
         ndkEvent.relay = relay;
         subscription.eventReceived(ndkEvent, relay, true);
     } catch (e) {
-        console.error("failed to deserialize event", e);
+        console.error("failed to deserialize event", e, (e as Error)?.stack);
     }
 }
 

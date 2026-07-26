@@ -472,7 +472,14 @@ export class NDKSubscription extends EventEmitter<{
 
         // Attach event handlers from options to eliminate race condition
         if (this.opts.onEvent) {
-            this.on("event", this.opts.onEvent);
+            const userOnEvent = this.opts.onEvent;
+            this.on("event", (...args) => {
+                try {
+                    userOnEvent(...args);
+                } catch (err) {
+                    this.debug("Error in onEvent handler:", err);
+                }
+            });
         }
         if (this.opts.onEose) {
             this.on("eose", this.opts.onEose);

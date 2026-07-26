@@ -1,4 +1,5 @@
-import type { NDKFilter, NDKRawEvent } from "../index.js";
+import type { NDKFilter } from "../subscription/index.js";
+import type { NDKRawEvent, NostrEvent } from "../events/index.js";
 
 /**
  * Matches a filter against an event
@@ -6,11 +7,11 @@ import type { NDKFilter, NDKRawEvent } from "../index.js";
  * @param event - The event to match
  * @returns True if the event matches the filter, false otherwise
  */
-export function matchFilter(filter: NDKFilter, event: NDKRawEvent): boolean {
-    if (filter.ids && filter.ids.indexOf(event.id) === -1) {
+export function matchFilter(filter: NDKFilter, event: NDKRawEvent | NostrEvent): boolean {
+    if (filter.ids && (!event.id || filter.ids.indexOf(event.id) === -1)) {
         return false;
     }
-    if (filter.kinds && filter.kinds.indexOf(event.kind) === -1) {
+    if (filter.kinds && (event.kind === undefined || filter.kinds.indexOf(event.kind as any) === -1)) {
         return false;
     }
     if (filter.authors && filter.authors.indexOf(event.pubkey) === -1) {
@@ -25,11 +26,11 @@ export function matchFilter(filter: NDKFilter, event: NDKRawEvent): boolean {
             if (tagName === "t") {
                 // only make lower case if the tag is 't', no need to do lowercase for most other things
                 const values = filter[`#${tagName}`]?.map((v: string) => v.toLowerCase());
-                if (values && !event.tags.find(([t, v]) => t === tagName && values?.indexOf(v.toLowerCase()) !== -1))
+                if (values && !event.tags?.find(([t, v]) => t === tagName && values?.indexOf(v.toLowerCase()) !== -1))
                     return false;
             } else {
                 const values = filter[`#${tagName}`];
-                if (values && !event.tags.find(([t, v]) => t === tagName && values?.indexOf(v) !== -1)) return false;
+                if (values && !event.tags?.find(([t, v]) => t === tagName && values?.indexOf(v) !== -1)) return false;
             }
         }
     }
@@ -39,3 +40,15 @@ export function matchFilter(filter: NDKFilter, event: NDKRawEvent): boolean {
 
     return true;
 }
+
+/**
+ * Checks if any of the provided NDKFilters matches a NostrEvent.
+ */
+export function matchFilters(filters: NDKFilter[], event: NDKRawEvent | NostrEvent): boolean {
+    for (let i = 0; i < filters.length; i++) {
+        if (matchFilter(filters[i], event)) return true;
+    }
+    return false;
+}
+
+

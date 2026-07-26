@@ -1,8 +1,8 @@
-import { matchFilters, type VerifiedEvent } from "nostr-tools";
 import { LRUCache } from "typescript-lru-cache";
 import type { NDKEventId, NostrEvent } from "../events/index.js";
 import type { NDKRelay } from "../relay/index.js";
 import type { NDKSubscription } from "./index.js";
+import { matchFilters } from "../utils/filter.js";
 
 export type NDKSubscriptionId = string;
 
@@ -80,7 +80,7 @@ export class NDKSubscriptionManager {
 
         // First pass: Filter matching
         for (const sub of subscriptions) {
-            if (matchFilters(sub.filters, event as VerifiedEvent)) {
+            if (matchFilters(sub.filters, event)) {
                 matchingSubs.push(sub);
             }
         }
@@ -115,7 +115,11 @@ export class NDKSubscriptionManager {
             }
 
             // Deliver the event to the subscription
-            sub.eventReceived(event, relay, false, optimisticPublish);
+            try {
+                sub.eventReceived(event, relay, false, optimisticPublish);
+            } catch (err) {
+                console.warn("[NDKSubscriptionManager] Listener threw error during event dispatch:", err);
+            }
         }
     }
 }
