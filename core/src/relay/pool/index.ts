@@ -269,7 +269,7 @@ export class NDKPool extends EventEmitter<{
         const relay = this.relays.get(normalizedUrl);
         if (!relay) return false;
 
-        return relay.status === NDKRelayStatus.CONNECTED;
+        return relay.status >= NDKRelayStatus.CONNECTED;
     }
 
     /**
@@ -329,7 +329,7 @@ export class NDKPool extends EventEmitter<{
 
         // Start connecting all relays (if not already connected/connecting)
         for (const relay of relaysToConnect) {
-            if (relay.status !== NDKRelayStatus.CONNECTED && relay.status !== NDKRelayStatus.CONNECTING) {
+            if (relay.status < NDKRelayStatus.CONNECTED && relay.status !== NDKRelayStatus.CONNECTING) {
                 this.emit("relay:connecting", relay);
                 relay.connect().catch((e) => {
                     this.debug(`Failed to connect to relay ${relay.url}: ${e ?? "No reason specified"}`);
@@ -338,7 +338,7 @@ export class NDKPool extends EventEmitter<{
         }
 
         // Helper to check if all relays are connected
-        const allConnected = () => relaysToConnect.every((r) => r.status === NDKRelayStatus.CONNECTED);
+        const allConnected = () => relaysToConnect.every((r) => r.status >= NDKRelayStatus.CONNECTED);
 
         // Promise that resolves when all relays are connected
         const allConnectedPromise = new Promise<void>((resolve) => {
@@ -454,7 +454,7 @@ export class NDKPool extends EventEmitter<{
                 relay.connectivity.resetReconnectionState();
 
                 // Reconnect if not connected
-                if (relay.status !== NDKRelayStatus.CONNECTED && relay.status !== NDKRelayStatus.CONNECTING) {
+                if (relay.status < NDKRelayStatus.CONNECTED && relay.status !== NDKRelayStatus.CONNECTING) {
                     relay.connect().catch((e) => {
                         this.debug(`Failed to reconnect relay ${relay.url} after system event: ${e}`);
                     });

@@ -357,7 +357,7 @@ export class NDKRelayConnectivity {
         // Clear any pending publish/auth promises to prevent memory leaks
         this.clearPendingPublishes(new Error(`Relay ${this.ndkRelay.url} disconnected`));
 
-        if (this._status === NDKRelayStatus.CONNECTED) {
+        if (this._status >= NDKRelayStatus.CONNECTED) {
             this.handleReconnection();
         }
         this._status = NDKRelayStatus.DISCONNECTED;
@@ -644,7 +644,7 @@ export class NDKRelayConnectivity {
      * @returns {boolean} `true` if the relay connection is in the `CONNECTED` status, `false` otherwise.
      */
     public isAvailable(): boolean {
-        return this._status === NDKRelayStatus.CONNECTED;
+        return this._status >= NDKRelayStatus.CONNECTED;
     }
 
     /**
