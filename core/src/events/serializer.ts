@@ -93,11 +93,20 @@ function getSerializationPrefix(): number {
     return Number(prefix);
 }
 
-export function serialize(this: NDKEvent | NostrEvent, includeSig = false, includeId = false): NDKEventSerialized {
+export function serialize(
+    this: NDKEvent | NostrEvent,
+    includeSig = false,
+    includeId = false,
+    serializationPrefix?: number,
+): NDKEventSerialized {
     validateForSerialization(this);
 
+    const prefix = serializationPrefix !== undefined && serializationPrefix !== null
+        ? Number(serializationPrefix)
+        : getSerializationPrefix();
+
     const payload: any[] = [
-        getSerializationPrefix(),
+        prefix,
         this.uid,
         this.created_at,
         this.kind,
@@ -111,8 +120,13 @@ export function serialize(this: NDKEvent | NostrEvent, includeSig = false, inclu
     return JSON.stringify(payload);
 }
 
-export function serializeEvent(event: NostrEvent | NDKEvent, includeSig = false, includeId = false): NDKEventSerialized {
-    return serialize.call(event, includeSig, includeId);
+export function serializeEvent(
+    event: NostrEvent | NDKEvent,
+    includeSig = false,
+    includeId = false,
+    serializationPrefix?: number,
+): NDKEventSerialized {
+    return serialize.call(event, includeSig, includeId, serializationPrefix);
 }
 
 /**

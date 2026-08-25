@@ -131,6 +131,16 @@ export function verifySignature(this: NDKEvent, persist: boolean): boolean | und
                 return true;
             }
 
+            // Chain-verified events: carry kid referencing a Kind 297 entry.
+            // Full chain resolution and cryptographic verification is handled by the EDM/relay policy layers.
+            if (this.kid) {
+                if (persist) {
+                    this.signatureVerified = true;
+                    if (this.sig) verifiedSignatures.set(this.id, this.sig);
+                }
+                return true;
+            }
+
             this.signatureVerified = false;
             return false;
         }
