@@ -5,7 +5,7 @@ export function eventsBySameAuthor(op: NDKEvent, events: NDKEvent[]) {
     const eventsByAuthor = new Map<NDKEventId, NDKEvent>();
     eventsByAuthor.set(op.id, op);
     events.forEach((event) => {
-        if (event.pubkey === op.pubkey) {
+        if (event.uid === op.uid) {
             eventsByAuthor.set(event.id, event);
         }
     });
@@ -15,6 +15,25 @@ export function eventsBySameAuthor(op: NDKEvent, events: NDKEvent[]) {
 const hasMarkers = (event: NDKEvent, tagType: string): boolean => {
     return event.getMatchingTags(tagType).some((tag) => tag[3] && tag[3] !== "");
 };
+
+/**
+ * Checks if an event is a reply to an original post or to a thread.
+ *
+ * @param event The event to check
+ * @returns True if the event is a reply to an original post or to a thread, false otherwise
+ */
+export function isReply(event: NDKEvent): boolean {
+    const hasMarker = hasMarkers(event, "e") || hasMarkers(event, "a");
+
+    if (hasMarker) {
+        return event.tags.some((tag) => ["e", "a"].includes(tag[0]) && ["reply", "root"].includes(tag[3]));
+    }
+
+    const hasETags = event.tags.some((tag) => tag[0] === "e");
+    const hasATags = event.tags.some((tag) => tag[0] === "a");
+
+    return hasETags || hasATags;
+}
 
 /**
  * Checks if an event is a reply to an original post or to a thread.
@@ -144,7 +163,7 @@ export function eventReplies(op: NDKEvent, events: NDKEvent[], threadEventIds: S
  */
 export function eventIsPartOfThread(op: NDKEvent, event: NDKEvent, eventsByAuthor: Map<NDKEventId, NDKEvent>): boolean {
     // must be same author
-    if (op.pubkey !== event.pubkey) return false;
+    if (op.uid !== event.uid) return false;
 
     // Check if all tagged events are by the original author
     const taggedEventIds = event.getMatchingTags("e").map((tag) => tag[1]);

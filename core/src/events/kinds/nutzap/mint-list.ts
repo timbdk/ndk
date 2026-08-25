@@ -58,7 +58,7 @@ export class NDKCashuMintList extends NDKEvent {
         if (this._p2pk) {
             return this._p2pk;
         }
-        this._p2pk = this.tagValue("pubkey") ?? this.pubkey;
+        this._p2pk = this.tagValue("pubkey") ?? this.uid ?? "";
         return this._p2pk;
     }
 

@@ -16,6 +16,9 @@ import { NDKKind } from "./kinds/index.js";
 import { encode } from "./nip19.js";
 import type { NIP73EntityType } from "./nip73.js";
 import { repost } from "./repost.js";
+import { hexToBytes, bytesToHex } from "@noble/hashes/utils.js";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { base64 } from "@scure/base";
 import { deserialize, type NDKEventSerialized, serialize } from "./serializer.js";
 import { getEventHash, validate, verifySignature } from "./validation.js";
 
@@ -56,7 +59,9 @@ export type NostrEvent = {
     content: string;
     tags: NDKTag[];
     kind?: NDKKind | number;
-    pubkey: string;
+    uid: string;
+    kid?: string;
+    key?: string;
     id?: string;
     sig?: string;
 };
@@ -69,7 +74,10 @@ export type NDKRawEvent = {
     content: string;
     tags: NDKTag[];
     kind: NDKKind | number;
-    pubkey: string;
+    uid: string;
+    pubkey?: string;
+    kid?: string;
+    key?: string;
     id: string;
     sig: string;
 };
@@ -86,7 +94,9 @@ export class NDKEvent extends EventEmitter {
     public kind: NDKKind | number;
     public id = "";
     public sig?: string;
-    public pubkey = "";
+    public uid = "";
+    public kid?: string;
+    public key?: string;
     public signatureVerified?: boolean;
 
     private _author: NDKUser | undefined = undefined;
@@ -123,7 +133,9 @@ export class NDKEvent extends EventEmitter {
         this.tags = event?.tags || [];
         this.id = event?.id || "";
         this.sig = event?.sig;
-        this.pubkey = event?.pubkey || "";
+        this.uid = event?.uid || (event as any)?.pubkey || "";
+        this.kid = event?.kid;
+        this.key = event?.key;
         this.kind = event?.kind!;
 
         if (event instanceof NDKEvent) {
@@ -134,6 +146,20 @@ export class NDKEvent extends EventEmitter {
             this.publishStatus = event.publishStatus;
             this.publishError = event.publishError;
         }
+    }
+
+    /**
+     * @deprecated Use `event.uid` instead. This alias exists for backward compatibility with downstream libraries and will be removed in Phase 04.
+     */
+    get pubkey(): string {
+        return this.uid;
+    }
+
+    /**
+     * @deprecated Use `event.uid` instead. This alias exists for backward compatibility with downstream libraries and will be removed in Phase 04.
+     */
+    set pubkey(val: string) {
+        this.uid = val;
     }
 
     /**
@@ -150,19 +176,22 @@ export class NDKEvent extends EventEmitter {
      * Returns the event as is.
      */
     public rawEvent(): NDKRawEvent {
-        return {
+        const raw: NDKRawEvent = {
             created_at: this.created_at!,
             content: this.content,
             tags: this.tags,
             kind: this.kind,
-            pubkey: this.pubkey,
+            pubkey: this.uid,
+            uid: this.uid,
             id: this.id,
             sig: this.sig!,
         };
+        if (this.kid) raw.kid = this.kid;
+        if (this.key) raw.key = this.key;
+        return raw;
     }
 
     set author(user: NDKUser) {
-        this.pubkey = user.pubkey;
         this._author = user;
         this._author.ndk ??= this.ndk;
     }
@@ -175,7 +204,16 @@ export class NDKEvent extends EventEmitter {
 
         if (!this.ndk) throw new Error("No NDK instance found");
 
-        const user = this.ndk.getUser({ pubkey: this.pubkey });
+        let pubkey = this.uid;
+        if (this.key && this.key.includes(":")) {
+            try {
+                pubkey = bytesToHex(base64.decode(this.key.split(":")[1]));
+            } catch {
+                // fallback
+            }
+        }
+
+        const user = this.ndk.getUser({ pubkey });
         this._author = user;
         return user;
     }
@@ -290,14 +328,14 @@ export class NDKEvent extends EventEmitter {
             tags.push(tag);
         } else if (target instanceof NDKEvent) {
             const event = target as NDKEvent;
-            skipAuthorTag ??= event?.pubkey === this.pubkey;
+            skipAuthorTag ??= event?.uid === this.uid;
             tags = event.referenceTags(marker, skipAuthorTag, forceTag, opts);
 
             // tag p-tags in the event if they are not the same as the user signing this event
             if (opts?.pTags !== false) {
                 for (const pTag of event.getMatchingTags("p")) {
                     if (!pTag[1] || !isValidPubkey(pTag[1])) continue;
-                    if (pTag[1] === this.pubkey) continue;
+                    if (pTag[1] === this.uid) continue;
                     if (this.tags.find((t) => t[0] === "p" && t[1] === pTag[1])) continue;
 
                     this.tags.push(["p", pTag[1]]);
@@ -315,14 +353,13 @@ export class NDKEvent extends EventEmitter {
     /**
      * Return a NostrEvent object, trying to fill in missing fields
      * when possible, adding tags when necessary.
-     * @param pubkey {string} The pubkey of the user who the event belongs to.
+     * @param uid {string} The uid of the user who the event belongs to.
      * @param opts {ContentTaggingOptions} Options for content tagging.
      * @returns {Promise<NostrEvent>} A promise that resolves to a NostrEvent.
      */
-    async toNostrEvent(pubkey?: string, opts?: ContentTaggingOptions): Promise<NostrEvent> {
-        if (!pubkey && this.pubkey === "") {
-            const user = await this.ndk?.signer?.user();
-            this.pubkey = user?.pubkey || "";
+    async toNostrEvent(uid?: string, opts?: ContentTaggingOptions): Promise<NostrEvent> {
+        if (uid) {
+            this.uid = uid;
         }
 
         if (!this.created_at) {
@@ -337,9 +374,6 @@ export class NDKEvent extends EventEmitter {
             this.id = this.getEventHash();
             // eslint-disable-next-line no-empty
         } catch (_e) {}
-
-        // if (this.id) nostrEvent.id = this.id;
-        // if (this.sig) nostrEvent.sig = this.sig;
 
         return this.rawEvent();
     }
@@ -495,8 +529,10 @@ export class NDKEvent extends EventEmitter {
 
             // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
             signer = this.ndk?.signer!;
-        } else {
-            this.author = await signer.user();
+        }
+
+        if (!this.uid) {
+            throw new Error("sign(): uid must be set before signing");
         }
 
         const nostrEvent = await this.toNostrEvent(undefined, opts);
@@ -665,19 +701,19 @@ export class NDKEvent extends EventEmitter {
     /**
      * Provides a deduplication key for the event.
      *
-     * For kinds 0, 3, 10k-20k this will be the event <kind>:<pubkey>
-     * For kinds 30k-40k this will be the event <kind>:<pubkey>:<d-tag>
+     * For kinds 0, 3, 10k-20k this will be the event <kind>:<uid>
+     * For kinds 30k-40k this will be the event <kind>:<uid>:<d-tag>
      * For all other kinds this will be the event id
      */
     deduplicationKey(): string {
         if (this.kind === 0 || this.kind === 3 || (this.kind && this.kind >= 10000 && this.kind < 20000)) {
-            return `${this.kind}:${this.pubkey}`;
+            return `${this.kind}:${this.uid}`;
         }
         return this.tagId();
     }
 
     /**
-     * Returns the id of the event or, if it's a parameterized event, the generated id of the event using "d" tag, pubkey, and kind.
+     * Returns the id of the event or, if it's a parameterized event, the generated id of the event using "d" tag, uid, and kind.
      * @returns {string} The id
      */
     tagId(): string {
@@ -692,18 +728,18 @@ export class NDKEvent extends EventEmitter {
     /**
      * Returns a stable reference value for a replaceable event.
      *
-     * Param replaceable events are returned in the expected format of `<kind>:<pubkey>:<d-tag>`.
-     * Kind-replaceable events are returned in the format of `<kind>:<pubkey>:`.
+     * Param replaceable events are returned in the expected format of `<kind>:<uid>:<d-tag>`.
+     * Kind-replaceable events are returned in the format of `<kind>:<uid>:`.
      *
      * @returns {string} A stable reference value for replaceable events
      */
     tagAddress(): string {
         if (this.isParamReplaceable()) {
             const dTagId = this.dTag ?? "";
-            return `${this.kind}:${this.pubkey}:${dTagId}`;
+            return `${this.kind}:${this.uid}:${dTagId}`;
         }
         if (this.isReplaceable()) {
-            return `${this.kind}:${this.pubkey}:`;
+            return `${this.kind}:${this.uid}:`;
         }
 
         throw new Error("Event is not a replaceable event");
@@ -713,7 +749,7 @@ export class NDKEvent extends EventEmitter {
      * Determines the type of tag that can be used to reference this event from another event.
      * @returns {string} The tag type
      * @example
-     * event = new NDKEvent(ndk, { kind: 30000, pubkey: 'pubkey', tags: [ ["d", "d-code"] ] });
+     * event = new NDKEvent(ndk, { kind: 30000, uid: 'uid', tags: [ ["d", "d-code"] ] });
      * event.tagType(); // "a"
      */
     tagType(): "e" | "a" {
@@ -726,10 +762,10 @@ export class NDKEvent extends EventEmitter {
      * Consider using referenceTags() instead (unless you have a good reason to use this)
      *
      * @example
-     *     event = new NDKEvent(ndk, { kind: 30000, pubkey: 'pubkey', tags: [ ["d", "d-code"] ] });
-     *     event.tagReference(); // ["a", "30000:pubkey:d-code"]
+     *     event = new NDKEvent(ndk, { kind: 30000, uid: 'uid', tags: [ ["d", "d-code"] ] });
+     *     event.tagReference(); // ["a", "30000:uid:d-code"]
      *
-     *     event = new NDKEvent(ndk, { kind: 1, pubkey: 'pubkey', id: "eventid" });
+     *     event = new NDKEvent(ndk, { kind: 1, uid: 'uid', id: "eventid" });
      *     event.tagReference(); // ["e", "eventid"]
      * @returns {NDKTag} The NDKTag object referencing this event
      */
@@ -752,7 +788,7 @@ export class NDKEvent extends EventEmitter {
         tag.push(marker ?? "");
 
         if (!this.isParamReplaceable()) {
-            tag.push(this.pubkey);
+            tag.push(this.uid);
         }
 
         return tag;
@@ -764,10 +800,10 @@ export class NDKEvent extends EventEmitter {
      * @param skipAuthorTag Whether to explicitly skip adding the author tag of the event
      * @param forceTag Force a specific tag to be used instead of the default "e" or "a" tag
      * @example
-     *     event = new NDKEvent(ndk, { kind: 30000, pubkey: 'pubkey', tags: [ ["d", "d-code"] ] });
-     *     event.referenceTags(); // [["a", "30000:pubkey:d-code"], ["e", "parent-id"]]
+     *     event = new NDKEvent(ndk, { kind: 30000, uid: 'uid', tags: [ ["d", "d-code"] ] });
+     *     event.referenceTags(); // [["a", "30000:uid:d-code"], ["e", "parent-id"]]
      *
-     *     event = new NDKEvent(ndk, { kind: 1, pubkey: 'pubkey', id: "eventid" });
+     *     event = new NDKEvent(ndk, { kind: 1, uid: 'uid', id: "eventid" });
      *     event.referenceTags(); // [["e", "parent-id"]]
      * @returns {NDKTag} The NDKTag object referencing this event
      */
@@ -794,11 +830,11 @@ export class NDKEvent extends EventEmitter {
             return tag;
         });
 
-        // add marker and pubkey to e tags, and marker to a tags
+        // add marker and uid to e tags, and marker to a tags
         tags.forEach((tag) => {
             if (tag[0] === "e") {
                 tag.push(marker ?? "");
-                tag.push(this.pubkey);
+                tag.push(this.uid);
             } else if (marker) {
                 tag.push(marker);
             }
@@ -1024,7 +1060,7 @@ export class NDKEvent extends EventEmitter {
                     tag = ["e", this.tagId()];
                     const relayHint = this.relay?.url ?? "";
                     tag.push(relayHint);
-                    tag.push(this.pubkey);
+                    tag.push(this.uid);
                 }
                 reply.tags.push(tag);
             } else {
@@ -1037,15 +1073,15 @@ export class NDKEvent extends EventEmitter {
                     lowerTag = ["a", this.tagAddress(), relayHint];
                     upperTag = ["A", this.tagAddress(), relayHint];
                 } else {
-                    lowerTag = ["e", this.tagId(), relayHint, this.pubkey];
-                    upperTag = ["E", this.tagId(), relayHint, this.pubkey];
+                    lowerTag = ["e", this.tagId(), relayHint, this.uid];
+                    upperTag = ["E", this.tagId(), relayHint, this.uid];
                 }
 
                 reply.tags.push(lowerTag);
                 reply.tags.push(upperTag);
                 reply.tags.push(["K", this.kind?.toString()]);
                 if (opts?.pTags !== false && opts?.pTagOnATags !== false) {
-                    reply.tags.push(["P", this.pubkey]);
+                    reply.tags.push(["P", this.uid]);
                 }
             }
 
@@ -1054,7 +1090,7 @@ export class NDKEvent extends EventEmitter {
             // carry over all p tags if not disabled
             if (opts?.pTags !== false) {
                 reply.tags.push(...this.getMatchingTags("p"));
-                reply.tags.push(["p", this.pubkey]);
+                reply.tags.push(["p", this.uid]);
             }
         }
 

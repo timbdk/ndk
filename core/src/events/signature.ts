@@ -86,7 +86,9 @@ export async function verifySignatureAsync(event: NDKEvent, _persist: boolean, r
                 serialized,
                 id: event.id,
                 sig: event.sig,
-                pubkey: event.pubkey,
+                uid: event.uid,
+                key: event.key,
+                kid: event.kid,
             });
         });
     }

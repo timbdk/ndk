@@ -43,7 +43,6 @@
       },
       "devDependencies": {
         "@nostr-dev-kit/cache-dexie": "^2.7.8",
-        "@nostr-dev-kit/cache-sqlite-wasm": "^1.0.0",
         "@types/debug": "^4.1.12",
         "@types/node": "^24.10.0",
         "fake-indexeddb": "^6.0.0",
@@ -56,7 +55,6 @@
       },
       "peerDependencies": {
         "@nostr-dev-kit/cache-dexie": "^2.7.8",
-        "@nostr-dev-kit/cache-sqlite-wasm": "^1.0.0",
         "@nostr-dev-kit/ndk": "^3.0.0",
       },
     },
@@ -148,22 +146,6 @@
         "@types/better-sqlite3": "^7.6.8",
         "@types/node": "^24.10.0",
         "tsup": "^8.4.0",
-        "typescript": "^5.9.3",
-        "vitest": "^4.0.14",
-      },
-      "peerDependencies": {
-        "@nostr-dev-kit/ndk": "^3.0.0",
-      },
-    },
-    "cache-sqlite-wasm": {
-      "name": "@nostr-dev-kit/cache-sqlite-wasm",
-      "version": "1.0.0",
-      "dependencies": {
-        "wa-sqlite": "github:rhashimoto/wa-sqlite",
-      },
-      "devDependencies": {
-        "@types/node": "^24.10.0",
-        "jsdom": "^27.0.1",
         "typescript": "^5.9.3",
         "vitest": "^4.0.14",
       },
@@ -989,8 +971,6 @@
     "@nostr-dev-kit/cache-redis": ["@nostr-dev-kit/cache-redis@workspace:cache-redis"],
 
     "@nostr-dev-kit/cache-sqlite": ["@nostr-dev-kit/cache-sqlite@workspace:cache-sqlite"],
-
-    "@nostr-dev-kit/cache-sqlite-wasm": ["@nostr-dev-kit/cache-sqlite-wasm@workspace:cache-sqlite-wasm"],
 
     "@nostr-dev-kit/messages": ["@nostr-dev-kit/messages@workspace:messages"],
 
@@ -3189,8 +3169,6 @@
     "vue": ["vue@3.5.24", "", { "dependencies": { "@vue/compiler-dom": "3.5.24", "@vue/compiler-sfc": "3.5.24", "@vue/runtime-dom": "3.5.24", "@vue/server-renderer": "3.5.24", "@vue/shared": "3.5.24" }, "peerDependencies": { "typescript": "*" }, "optionalPeers": ["typescript"] }, "sha512-uTHDOpVQTMjcGgrqFPSb8iO2m1DUvo+WbGqoXQz8Y1CeBYQ0FXf2z1gLRaBtHjlRz7zZUBHxjVB5VTLzYkvftg=="],
 
     "w3c-xmlserializer": ["w3c-xmlserializer@5.0.0", "", { "dependencies": { "xml-name-validator": "^5.0.0" } }, "sha512-o8qghlI8NZHU1lLPrpi2+Uq7abh4GGPpYANlalzWxyWteJOCsr/P+oPBA49TOLu5FTZO4d3F9MnWJfiMo4BkmA=="],
-
-    "wa-sqlite": ["wa-sqlite@github:rhashimoto/wa-sqlite#7792195", {}, "rhashimoto-wa-sqlite-7792195"],
 
     "walker": ["walker@1.0.8", "", { "dependencies": { "makeerror": "1.0.12" } }, "sha512-ts/8E8l5b7kY0vlWLewOkDXMmPdLcVV4GmOQLyxuSswIJsweeFZtAsMF7k1Nszz+TYBQrlYRmzOnr398y1JemQ=="],
 

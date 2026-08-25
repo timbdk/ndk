@@ -38,7 +38,7 @@ export async function getCashuMintRecommendations(ndk: NDK, filter?: NDKFilter):
 
                     const entry = res[url] || { events: [], pubkeys: new Set() };
                     entry.events.push(event);
-                    entry.pubkeys.add(event.pubkey);
+                    entry.pubkeys.add(event.uid);
                     res[url] = entry;
                 }
                 break;
@@ -50,7 +50,7 @@ export async function getCashuMintRecommendations(ndk: NDK, filter?: NDKFilter):
 
                     const entry = res[url] || { events: [], pubkeys: new Set() };
                     entry.events.push(event);
-                    entry.pubkeys.add(event.pubkey);
+                    entry.pubkeys.add(event.uid);
                     res[url] = entry;
                 }
                 break;

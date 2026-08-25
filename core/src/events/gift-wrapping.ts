@@ -1,3 +1,6 @@
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
+import { base64 } from "@scure/base";
 import { getEventHash } from "nostr-tools";
 import type { NDKSigner } from "../signers/index.js";
 import { NDKPrivateKeySigner } from "../signers/private-key";
@@ -20,7 +23,7 @@ export type GiftWrapParams = {
  * ❌ DON'T use the wrapper's created_at for display - use the rumor's created_at
  * ❌ DON'T forget to publish to BOTH sender and recipient relays (per NIP-17)
  *
- * @param event - The rumor event to wrap (will auto-set pubkey if missing)
+ * @param event - The rumor event to wrap (will auto-set uid if missing)
  * @param recipient - The recipient's NDKUser
  * @param signer - The signer (defaults to event.ndk.signer)
  * @param params - Optional parameters (scheme, rumorKind, wrapTags)
@@ -42,10 +45,12 @@ export async function giftWrap(
     if (!_signer.encryptionEnabled || !_signer.encryptionEnabled(params.scheme))
         throw new Error("signer is not able to giftWrap");
 
-    // Auto-set pubkey if not present
-    if (!event.pubkey) {
+    // Auto-set uid if not present
+    if (!event.uid) {
         const sender = await _signer.user();
-        event.pubkey = sender.pubkey;
+        const keyBytes = hexToBytes(sender.pubkey);
+        event.uid = bytesToHex(sha256(keyBytes));
+        event.key = `secp256k1-schnorr:${base64.encode(keyBytes)}`;
     }
 
     // AI Guardrail: Warn if the rumor is already signed
@@ -79,7 +84,7 @@ export async function giftUnwrap(
         }
     }
 
-    const _sender = sender || new NDKUser({ pubkey: event.pubkey });
+    const _sender = sender || new NDKUser({ pubkey: event.uid });
     const _signer = signer || event.ndk?.signer;
     if (!_signer) throw new Error("no signer");
 
@@ -90,10 +95,10 @@ export async function giftUnwrap(
         if (!new NDKEvent(undefined, seal).verifySignature(false))
             throw new Error("GiftSeal signature verification failed!");
 
-        const rumorSender = new NDKUser({ pubkey: seal.pubkey });
+        const rumorSender = new NDKUser({ pubkey: seal.uid });
         const rumor = JSON.parse(await _signer.decrypt(rumorSender, seal.content, scheme));
         if (!rumor) throw new Error("Failed to decrypt seal");
-        if (rumor.pubkey !== seal.pubkey) throw new Error("Invalid GiftWrap, sender validation failed!");
+        if (rumor.uid !== seal.uid) throw new Error("Invalid GiftWrap, sender validation failed!");
 
         const rumorEvent = new NDKEvent(event.ndk, rumor as NostrEvent);
 
@@ -126,6 +131,10 @@ async function getSealEvent(
     seal.kind = NDKKind.GiftWrapSeal;
     seal.created_at = approximateNow(5);
     seal.content = JSON.stringify(rumor.rawEvent());
+    const sealUser = await signer.user();
+    const sealKeyBytes = hexToBytes(sealUser.pubkey);
+    seal.uid = bytesToHex(sha256(sealKeyBytes));
+    seal.key = `secp256k1-schnorr:${base64.encode(sealKeyBytes)}`;
     await seal.encrypt(recipient, signer, scheme);
     await seal.sign(signer);
     return seal;
@@ -145,6 +154,10 @@ async function getWrapEvent(
     if (params?.wrapTags) wrap.tags = params.wrapTags;
     wrap.tag(recipient);
     wrap.content = JSON.stringify(sealed.rawEvent());
+    const wrapUser = await signer.user();
+    const wrapKeyBytes = hexToBytes(wrapUser.pubkey);
+    wrap.uid = bytesToHex(sha256(wrapKeyBytes));
+    wrap.key = `secp256k1-schnorr:${base64.encode(wrapKeyBytes)}`;
     await wrap.encrypt(recipient, signer, scheme);
     await wrap.sign(signer);
     return wrap;

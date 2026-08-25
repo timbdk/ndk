@@ -102,8 +102,8 @@ export class NDKWoT {
             });
 
             for (const event of followEvents) {
-                if (processedUsers.has(event.pubkey)) continue;
-                processedUsers.add(event.pubkey);
+                if (processedUsers.has(event.uid)) continue;
+                processedUsers.add(event.uid);
 
                 const follows = this.extractFollows(event);
                 const limitedFollows = follows.slice(0, maxFollows);
@@ -117,7 +117,7 @@ export class NDKWoT {
                         node = {
                             pubkey: followedPubkey,
                             depth: currentDepth + 1,
-                            followedBy: new Set([event.pubkey]),
+                            followedBy: new Set([event.uid]),
                         };
                         this.nodes.set(followedPubkey, node);
                     } else {
@@ -125,7 +125,7 @@ export class NDKWoT {
                         if (currentDepth + 1 < node.depth) {
                             node.depth = currentDepth + 1;
                         }
-                        node.followedBy.add(event.pubkey);
+                        node.followedBy.add(event.uid);
                     }
                 }
             }

@@ -18,7 +18,7 @@ import { deserialize, NDKEvent, type NDKRelay, profileFromEvent } from "@nostr-d
 function matchFilter(filter: NDKFilter, event: any): boolean {
     if (filter.ids && filter.ids.indexOf(event.id) === -1) return false;
     if (filter.kinds && filter.kinds.indexOf(event.kind) === -1) return false;
-    if (filter.authors && filter.authors.indexOf(event.pubkey) === -1) return false;
+    if (filter.authors && filter.authors.indexOf(event.uid) === -1) return false;
     for (const f of Object.keys(filter)) {
         if (f[0] === "#") {
             const tagName = f.slice(1);
@@ -402,9 +402,9 @@ export default class NDKCacheAdapterDexie implements NDKCacheAdapter {
 
             try {
                 const profile: NDKUserProfile = profileFromEvent(event);
-                this.saveProfile(event.pubkey, profile);
+                this.saveProfile(event.uid, profile);
             } catch {
-                this.debug(`Failed to save profile for pubkey: ${event.pubkey}`);
+                this.debug(`Failed to save profile for uid: ${event.uid}`);
             }
         }
         let addEvent = true;
@@ -419,7 +419,10 @@ export default class NDKCacheAdapterDexie implements NDKCacheAdapter {
         if (addEvent) {
             const eventData: Event = {
                 id: event.tagId(),
-                pubkey: event.pubkey,
+                pubkey: event.uid,
+                uid: event.uid,
+                kid: event.kid,
+                key: event.key,
                 kind: event.kind,
                 createdAt: event.created_at ?? Date.now(),
                 relay: relay?.url,

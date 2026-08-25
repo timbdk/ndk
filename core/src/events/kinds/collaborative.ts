@@ -185,11 +185,11 @@ export class NDKCollaborativeEvent extends NDKEvent {
         // Store the event reference
         this._currentVersion = targetEvent;
 
-        // The pubkey of the target event author should be included in authors
+        // The uid of the target event author should be included in authors
         // if not already present
-        if (!this._authors.find((a) => a.pubkey === targetEvent.pubkey)) {
+        if (!this._authors.find((a) => a.pubkey === targetEvent.uid)) {
             if (this.ndk) {
-                this._authors.push(this.ndk.getUser({ pubkey: targetEvent.pubkey }));
+                this._authors.push(this.ndk.getUser({ pubkey: targetEvent.uid }));
             }
         }
     }

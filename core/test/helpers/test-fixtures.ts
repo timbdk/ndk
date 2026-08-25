@@ -270,21 +270,21 @@ export class TestEventFactory {
         // Tag the original event
         if (originalEvent.kind === 1) {
             // For kind 1, use the standard NIP-10 approach
-            replyEvent.tags.push(["e", originalEvent.id, "", "root", originalEvent.pubkey]);
-            replyEvent.tags.push(["p", originalEvent.pubkey]);
+            replyEvent.tags.push(["e", originalEvent.id, "", "root", originalEvent.uid]);
+            replyEvent.tags.push(["p", originalEvent.uid]);
         } else {
             // For other kinds, use uppercase tags for the root
             replyEvent.tags.push([
                 "A",
-                `${originalEvent.kind}:${originalEvent.pubkey}:${originalEvent.getTagValue("d") || ""}`,
+                `${originalEvent.kind}:${originalEvent.uid}:${originalEvent.getTagValue("d") || ""}`,
                 "",
             ]);
             replyEvent.tags.push([
                 "a",
-                `${originalEvent.kind}:${originalEvent.pubkey}:${originalEvent.getTagValue("d") || ""}`,
+                `${originalEvent.kind}:${originalEvent.uid}:${originalEvent.getTagValue("d") || ""}`,
                 "",
             ]);
-            replyEvent.tags.push(["P", originalEvent.pubkey]);
+            replyEvent.tags.push(["P", originalEvent.uid]);
             replyEvent.tags.push(["K", originalEvent.kind.toString()]);
         }
 

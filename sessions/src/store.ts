@@ -285,7 +285,7 @@ export function createSessionStore() {
                 if (session.muteSet || session.mutedWords) {
                     state.ndk.muteFilter = (event) => {
                         // Check if author is muted
-                        if (session.muteSet?.has(event.pubkey)) return true;
+                        if (session.muteSet?.has(event.uid)) return true;
 
                         // Check if event ID is muted
                         if (event.id && session.muteSet?.has(event.id)) return true;

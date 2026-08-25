@@ -52,16 +52,16 @@ describe("WoT Filtering", () => {
     });
 
     it("should filter events by WOT inclusion", () => {
-        const events = [{ pubkey: rootPubkey } as NDKEvent, { pubkey: "unknown" } as NDKEvent];
+        const events = [{ uid: rootPubkey } as NDKEvent, { uid: "unknown" } as NDKEvent];
 
         const filtered = filterByWoT(wot, events, { includeUnknown: false });
 
         expect(filtered).toHaveLength(1);
-        expect(filtered[0].pubkey).toBe(rootPubkey);
+        expect(filtered[0].uid).toBe(rootPubkey);
     });
 
     it("should include unknown events when specified", () => {
-        const events = [{ pubkey: rootPubkey } as NDKEvent, { pubkey: "unknown" } as NDKEvent];
+        const events = [{ uid: rootPubkey } as NDKEvent, { uid: "unknown" } as NDKEvent];
 
         const filtered = filterByWoT(wot, events, { includeUnknown: true });
 
@@ -80,12 +80,12 @@ describe("WoT Ranking", () => {
     });
 
     it("should rank events with unknowns last", () => {
-        const events = [{ pubkey: "unknown" } as NDKEvent, { pubkey: rootPubkey } as NDKEvent];
+        const events = [{ uid: "unknown" } as NDKEvent, { uid: rootPubkey } as NDKEvent];
 
         const ranked = rankByWoT(wot, events, { unknownsLast: true });
 
-        expect(ranked[0].pubkey).toBe(rootPubkey);
-        expect(ranked[1].pubkey).toBe("unknown");
+        expect(ranked[0].uid).toBe(rootPubkey);
+        expect(ranked[1].uid).toBe("unknown");
     });
 });
 

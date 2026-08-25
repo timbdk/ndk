@@ -1,6 +1,7 @@
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
+import { base64 } from "@scure/base";
 import { LRUCache } from "typescript-lru-cache";
 import type { NDKEvent, NostrEvent } from ".";
 import { verifySignatureAsync } from "./signature";
@@ -16,8 +17,10 @@ export function validate(this: NDKEvent): boolean {
     if (typeof this.kind !== "number") return false;
     if (typeof this.content !== "string") return false;
     if (typeof this.created_at !== "number") return false;
-    if (typeof this.pubkey !== "string") return false;
-    if (!this.pubkey.match(PUBKEY_REGEX)) return false;
+    if (typeof this.uid !== "string") return false;
+    if (!this.uid.match(PUBKEY_REGEX)) return false;
+    if (this.kid !== undefined && (typeof this.kid !== "string" || !this.kid.match(PUBKEY_REGEX))) return false;
+    if (this.key !== undefined && (typeof this.key !== "string" || !this.key.includes(":"))) return false;
 
     if (!Array.isArray(this.tags)) return false;
     for (let i = 0; i < this.tags.length; i++) {
@@ -82,14 +85,54 @@ export function verifySignature(this: NDKEvent, persist: boolean): boolean | und
                     console.error("signature verification error", this.id, err);
                 });
         } else {
-            const hash = sha256(new TextEncoder().encode(this.serialize()));
-            const sigBytes = hexToBytes(this.sig as string);
-            const pubkeyBytes = hexToBytes(this.pubkey);
-            const res = schnorr.verify(sigBytes, hash, pubkeyBytes);
-            if (res) verifiedSignatures.set(this.id, this.sig!);
-            else verifiedSignatures.set(this.id, false);
-            this.signatureVerified = res;
-            return res;
+            // Interim rule (phases 01-04): kid-carrying events are accepted as already verified by relay
+            if (this.kid) {
+                if (persist) {
+                    this.signatureVerified = true;
+                    if (this.sig) verifiedSignatures.set(this.id, this.sig);
+                }
+                return true;
+            }
+
+            if (this.key) {
+                const colonIdx = this.key.indexOf(":");
+                if (colonIdx === -1) {
+                    this.signatureVerified = false;
+                    return false;
+                }
+                const b64 = this.key.substring(colonIdx + 1);
+                const keyBytes = base64.decode(b64);
+                const computedUid = bytesToHex(sha256(keyBytes));
+                if (computedUid !== this.uid) {
+                    this.signatureVerified = false;
+                    return false;
+                }
+
+                const hash = sha256(new TextEncoder().encode(this.serialize()));
+                const sigBytes = hexToBytes(this.sig as string);
+                const res = schnorr.verify(sigBytes, hash, keyBytes);
+                if (res) verifiedSignatures.set(this.id, this.sig!);
+                else verifiedSignatures.set(this.id, false);
+                this.signatureVerified = res;
+                return res;
+            }
+
+            // Kind 297 genesis exemption: self-certifies via content.keys.sign (verified in EDM)
+            const isGenesis297 =
+                this.kind === 297 &&
+                (!this.kid && !this.key) &&
+                Array.isArray(this.tags) &&
+                this.tags.some((t: string[]) => t[0] === "v" && t[1] === "genesis");
+            if (isGenesis297) {
+                if (persist) {
+                    this.signatureVerified = true;
+                    if (this.sig) verifiedSignatures.set(this.id, this.sig);
+                }
+                return true;
+            }
+
+            this.signatureVerified = false;
+            return false;
         }
     } catch (_err) {
         this.signatureVerified = false;

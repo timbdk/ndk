@@ -52,7 +52,6 @@
         "cache-redis",
         "cache-nostr",
         "cache-sqlite",
-        "cache-sqlite-wasm",
         "react",
         "mobile",
         "messages",

@@ -1,6 +1,9 @@
 /** biome-ignore-all lint/complexity/noStaticOnlyClass: <test purposes> */
 /** biome-ignore-all lint/suspicious/noExplicitAny: <test purposes> */
 
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
+import { base64 } from "@scure/base";
 import { EncryptedDirectMessage, Repost, ShortTextNote } from "nostr-tools/kinds";
 import type NDK from "../../src";
 import { NDKEvent, NDKPrivateKeySigner } from "../../src";
@@ -42,7 +45,10 @@ export class EventGenerator {
         const ndk = EventGenerator.requireNDK();
         const event = new NDKEvent(ndk);
         event.kind = kind;
-        event.pubkey = EventGenerator.resolvePubkey(pubkey);
+        const resolvedPubkey = EventGenerator.resolvePubkey(pubkey);
+        const keyBytes = hexToBytes(resolvedPubkey);
+        event.uid = bytesToHex(sha256(keyBytes));
+        event.key = `secp256k1-schnorr:${base64.encode(keyBytes)}`;
         event.content = content;
 
         return event;
@@ -68,7 +74,7 @@ export class EventGenerator {
     static async createRepost(originalEvent: NDKEvent, pubkey?: string): Promise<NDKEvent> {
         const event = EventGenerator.createEvent(Repost, JSON.stringify(await originalEvent.toNostrEvent()), pubkey);
         event.tags.push(["e", originalEvent.id || ""]);
-        event.tags.push(["p", originalEvent.pubkey]);
+        event.tags.push(["p", originalEvent.uid]);
 
         await event.sign();
 

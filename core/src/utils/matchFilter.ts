@@ -7,7 +7,7 @@ import type { NDKFilter } from "../subscription/index.js";
 export function matchFilter(filter: NDKFilter, event: NostrEvent): boolean {
     if (filter.ids && filter.ids.indexOf(event.id as string) === -1) return false;
     if (filter.kinds && filter.kinds.indexOf(event.kind) === -1) return false;
-    if (filter.authors && filter.authors.indexOf(event.pubkey) === -1) return false;
+    if (filter.authors && filter.authors.indexOf(event.uid) === -1) return false;
 
     for (const f in filter) {
         if (f[0] === '#') {

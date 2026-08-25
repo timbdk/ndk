@@ -58,15 +58,15 @@ export async function getRelayListForUsers(
 
         // get list of relay lists from cache
         for (const relayList of cachedList) {
-            if (relayList.kind === 10002) relayLists.set(relayList.pubkey, NDKRelayList.from(relayList));
+            if (relayList.kind === 10002) relayLists.set(relayList.uid, NDKRelayList.from(relayList));
         }
 
         for (const relayList of cachedList) {
             if (relayList.kind === 3) {
                 // skip if we already have a relay list for this pubkey
-                if (relayLists.has(relayList.pubkey)) continue;
+                if (relayLists.has(relayList.uid)) continue;
                 const list = relayListFromKind3(ndk, relayList);
-                if (list) fromContactList.set(relayList.pubkey, list);
+                if (list) fromContactList.set(relayList.uid, list);
             }
         }
 
@@ -99,13 +99,13 @@ export async function getRelayListForUsers(
             const sub = ndk.subscribe({ kinds: [3, 10002], authors: pubkeys }, subscribeOpts, {
                 onEvent: (event) => {
                     if (event.kind === NDKKind.RelayList) {
-                        const existingEvent = relayListEvents.get(event.pubkey);
+                        const existingEvent = relayListEvents.get(event.uid);
                         if (existingEvent && existingEvent.created_at! > event.created_at!) return;
-                        relayListEvents.set(event.pubkey, event);
+                        relayListEvents.set(event.uid, event);
                     } else if (event.kind === NDKKind.Contacts) {
-                        const existingEvent = contactListEvents.get(event.pubkey);
+                        const existingEvent = contactListEvents.get(event.uid);
                         if (existingEvent && existingEvent.created_at! > event.created_at!) return;
-                        contactListEvents.set(event.pubkey, event);
+                        contactListEvents.set(event.uid, event);
                     }
                 },
                 onEose: () => {
@@ -117,7 +117,7 @@ export async function getRelayListForUsers(
                     );
                     // Get all kind 10002 events
                     for (const event of relayListEvents.values()) {
-                        relayLists.set(event.pubkey, NDKRelayList.from(event));
+                        relayLists.set(event.uid, NDKRelayList.from(event));
                     }
 
                     // Go through the pubkeys we don't have results for and get the from kind 3 events

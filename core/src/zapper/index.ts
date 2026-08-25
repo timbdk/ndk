@@ -603,7 +603,7 @@ class NDKZapper extends EventEmitter<{
         if (zapTags.length === 0) {
             return [
                 {
-                    pubkey: this.target.pubkey,
+                    pubkey: this.target.uid,
                     amount: this.amount,
                 },
             ];

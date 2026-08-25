@@ -80,7 +80,7 @@ export class NDKDraft extends NDKEvent {
 
     get isProposal(): boolean {
         const pTag = this.tagValue("p");
-        return !!pTag && pTag !== this.pubkey;
+        return !!pTag && pTag !== this.uid;
     }
 
     /**
@@ -97,7 +97,7 @@ export class NDKDraft extends NDKEvent {
         if (this.content && this.content.length > 0) {
             try {
                 const ownPubkey = signer.pubkey;
-                const pubkeys = [this.tagValue("p"), this.pubkey].filter(Boolean);
+                const pubkeys = [this.tagValue("p"), this.uid].filter(Boolean);
 
                 // if there is a pubkey that is not ours, use that
                 const counterpartyPubkey = pubkeys.find((pubkey) => pubkey !== ownPubkey);

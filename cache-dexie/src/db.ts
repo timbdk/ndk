@@ -9,6 +9,9 @@ export interface Profile extends NDKUserProfile {
 export interface Event {
     id: string;
     pubkey: string;
+    uid?: string;
+    kid?: string;
+    key?: string;
     kind: number;
     createdAt: number;
     relay?: string;

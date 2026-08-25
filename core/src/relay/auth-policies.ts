@@ -1,3 +1,6 @@
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
+import { base64 } from "@scure/base";
 import createDebug from "debug";
 import { NDKEvent } from "../events/index.js";
 import { NDKKind } from "../events/kinds/index.js";
@@ -43,6 +46,10 @@ async function signAndAuth(
     reject: (event: NDKEvent) => void,
 ) {
     try {
+        const signerUser = await signer.user();
+        const pubkeyBytes = hexToBytes(signerUser.pubkey);
+        event.uid = bytesToHex(sha256(pubkeyBytes));
+        event.key = `secp256k1-schnorr:${base64.encode(pubkeyBytes)}`;
         await event.sign(signer);
         resolve(event);
     } catch (e) {

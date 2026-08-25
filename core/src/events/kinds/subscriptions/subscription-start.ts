@@ -95,7 +95,7 @@ export class NDKSubscriptionStart extends NDKEvent {
 
         this.tag(tier);
         this.removeTag("p");
-        this.tags.push(["p", tier.pubkey]);
+        this.tags.push(["p", tier.uid]);
         this.tags.push(["event", JSON.stringify(tier.rawEvent())]);
     }
 

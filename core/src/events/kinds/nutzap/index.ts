@@ -245,7 +245,7 @@ export class NDKNutzap extends NDKEvent {
 
         // Validate proof structure and tags
         const eventId = this.tagValue("e");
-        const senderPubkey = this.pubkey;
+        const senderPubkey = this.uid;
 
         for (let i = 0; i < this.proofs.length; i++) {
             const proof = this.proofs[i];

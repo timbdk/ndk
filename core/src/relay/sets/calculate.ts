@@ -29,7 +29,7 @@ export async function calculateRelaySetFromEvent(
     const relays: Set<NDKRelay> = new Set();
 
     // get the author's write relays
-    const authorWriteRelays = await getWriteRelaysFor(ndk, event.pubkey);
+    const authorWriteRelays = await getWriteRelaysFor(ndk, event.uid);
     if (authorWriteRelays) {
         authorWriteRelays.forEach((relayUrl) => {
             const relay = ndk.pool?.getRelay(relayUrl);

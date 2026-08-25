@@ -84,7 +84,7 @@ export function zapInvoiceFromEvent(event: NDKEvent): NDKZapInvoice | null {
     }
 
     const content = zapRequest.content;
-    const sender = zapRequest.pubkey;
+    const sender = zapRequest.uid;
     const recipientTag = event.getMatchingTags("p")[0];
     const recipient = recipientTag[1];
     let zappedEvent = event.getMatchingTags("e")[0];
@@ -99,7 +99,7 @@ export function zapInvoiceFromEvent(event: NDKEvent): NDKZapInvoice | null {
 
     const zapInvoice: NDKZapInvoice = {
         id: event.id,
-        zapper: event.pubkey,
+        zapper: event.uid,
         zappee: sender,
         zapped: recipient,
         zappedEvent: zappedEventId,

@@ -1,9 +1,10 @@
+import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
 import { schnorr } from "@noble/curves/secp256k1.js";
-import type { UnsignedEvent } from "nostr-tools";
-import { finalizeEvent, generateSecretKey, getPublicKey, nip04, nip19, nip44 } from "nostr-tools";
+import { generateSecretKey, getPublicKey, nip04, nip19, nip44 } from "nostr-tools";
 import * as nip49 from "nostr-tools/nip49";
-import type { NostrEvent } from "../../events/index.js";
+import { NostrEvent } from "../../events/index.js";
+import { serializeEvent } from "../../events/serializer.js";
 import type { NDK } from "../../ndk/index.js";
 import type { NDKEncryptionScheme } from "../../types.js";
 import { NDKUser } from "../../user";
@@ -173,7 +174,10 @@ export class NDKPrivateKeySigner implements NDKSigner {
             return bytesToHex(schnorr.sign(hexToBytes(event.id), this._privateKey));
         }
 
-        return finalizeEvent(event as UnsignedEvent, this._privateKey).sig;
+        const serialized = serializeEvent(event);
+        const hash = sha256(new TextEncoder().encode(serialized));
+        event.id = bytesToHex(hash);
+        return bytesToHex(schnorr.sign(hash, this._privateKey));
     }
 
     public async encryptionEnabled(scheme?: NDKEncryptionScheme): Promise<NDKEncryptionScheme[]> {

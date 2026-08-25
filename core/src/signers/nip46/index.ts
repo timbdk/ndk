@@ -12,6 +12,8 @@ import type { NDKSigner } from "../index.js";
 import { NDKPrivateKeySigner } from "../private-key/index.js";
 import { registerSigner } from "../registry.js";
 import { generateNostrConnectUri, type NostrConnectOptions, nostrConnectGenerateSecret } from "./nostrconnect.js";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { hexToBytes, bytesToHex } from "@noble/hashes/utils.js";
 import type { NDKRpcResponse } from "./rpc.js";
 import { NDKNostrRpc } from "./rpc.js";
 
@@ -256,9 +258,20 @@ export class NDKNip46Signer extends EventEmitter implements NDKSigner {
 
         if (!localUser) throw new Error("Local signer not ready");
 
+        const pTags = [localUser.pubkey];
+        try {
+            if (/^[a-f0-9]{64}$/i.test(localUser.pubkey)) {
+                const localKeyBytes = hexToBytes(localUser.pubkey);
+                const uid = bytesToHex(sha256(localKeyBytes));
+                if (!pTags.includes(uid)) pTags.push(uid);
+            }
+        } catch {
+            // ignore
+        }
+
         this.subscription = await this.rpc.subscribe({
             kinds: [NDKKind.NostrConnect],
-            "#p": [localUser.pubkey],
+            "#p": pTags,
         });
     }
 
@@ -285,8 +298,8 @@ export class NDKNip46Signer extends EventEmitter implements NDKSigner {
         const promise = new Promise<NDKUser>((resolve, reject) => {
             const connect = (response: NDKRpcResponse) => {
                 if (response.result === this.nostrConnectSecret) {
-                    // The response event pubkey is the bunker's pubkey, not the user's
-                    this.bunkerPubkey = response.event.pubkey;
+                    // The response event uid is the bunker's uid, not the user's
+                    this.bunkerPubkey = response.event.uid;
 
                     this.rpc.off("response", connect);
                     removeHandler = undefined;

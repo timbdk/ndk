@@ -33,7 +33,7 @@ export function filterByWoT(wot: NDKWoT, events: NDKEvent[], options: WoTFilterO
     const { maxDepth, minScore, includeUnknown = false } = options;
 
     return events.filter((event) => {
-        const pubkey = event.pubkey;
+        const pubkey = event.uid;
 
         // Check if in WOT
         const inWoT = wot.includes(pubkey, { maxDepth });
@@ -65,8 +65,8 @@ export function rankByWoT(wot: NDKWoT, events: NDKEvent[], options: WoTRankOptio
 
     // Built-in ranking algorithms
     return [...events].sort((a, b) => {
-        const aPubkey = a.pubkey;
-        const bPubkey = b.pubkey;
+        const aPubkey = a.uid;
+        const bPubkey = b.uid;
 
         const aInWoT = wot.includes(aPubkey);
         const bInWoT = wot.includes(bPubkey);
@@ -113,8 +113,8 @@ export function createWoTComparator(wot: NDKWoT, options: WoTRankOptions = {}): 
     const { algorithm = "distance", unknownsLast = false } = options;
 
     return (a: NDKEvent, b: NDKEvent) => {
-        const aPubkey = a.pubkey;
-        const bPubkey = b.pubkey;
+        const aPubkey = a.uid;
+        const bPubkey = b.uid;
 
         const aInWoT = wot.includes(aPubkey);
         const bInWoT = wot.includes(bPubkey);

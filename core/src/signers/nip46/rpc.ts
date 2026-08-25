@@ -1,3 +1,6 @@
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
+import { base64 } from "@scure/base";
 import { EventEmitter } from "tseep";
 import type { NostrEvent } from "../../events";
 import { NDKEvent } from "../../events";
@@ -57,32 +60,28 @@ export class NDKNostrRpc extends EventEmitter {
     }
 
     /**
-     * Updates the relay set used for RPC communication.
-     * Disconnects from old relays and connects to new ones.
+     * Update relay set.
+     * @param relayUrls
      */
     public updateRelays(relayUrls: string[]): void {
-        // Disconnect old pool
-        if (this.pool) {
-            for (const relay of this.pool.relays.values()) {
-                relay.disconnect();
-            }
+        if (!this.pool) {
+            this.pool = new NDKPool(relayUrls, this.ndk, {
+                debug: this.debug.extend("rpc-pool"),
+                name: "Nostr RPC",
+            });
         }
-
-        this.pool = new NDKPool(relayUrls, this.ndk, {
-            debug: this.debug.extend("rpc-pool"),
-            name: "Nostr RPC",
-        });
-
         this.relaySet = new NDKRelaySet(new Set(), this.ndk, this.pool);
         for (const url of relayUrls) {
             const relay = this.pool.getRelay(url, false, false);
-            relay.authPolicy = NDKRelayAuthPolicies.signIn({
-                ndk: this.ndk,
-                signer: this.signer,
-                debug: this.debug,
-            });
-            this.relaySet.addRelay(relay);
-            relay.connect();
+            if (relay) {
+                relay.authPolicy = NDKRelayAuthPolicies.signIn({
+                    ndk: this.ndk,
+                    signer: this.signer,
+                    debug: this.debug,
+                });
+                this.relaySet.addRelay(relay);
+                relay.connect();
+            }
         }
     }
 
@@ -126,7 +125,16 @@ export class NDKNostrRpc extends EventEmitter {
             this.encryptionType = "nip44";
         }
 
-        const remoteUser = this.ndk.getUser({ pubkey: event.pubkey });
+        let remotePubkeyHex = (event as any).uid ?? event.pubkey;
+        if (event.key && event.key.includes(":")) {
+            try {
+                remotePubkeyHex = bytesToHex(base64.decode(event.key.split(":")[1]));
+            } catch {
+                // fallback
+            }
+        }
+
+        const remoteUser = this.ndk.getUser({ pubkey: remotePubkeyHex });
         remoteUser.ndk = this.ndk;
         let decryptedContent: string;
 
@@ -142,7 +150,7 @@ export class NDKNostrRpc extends EventEmitter {
         const { id, method, params, result, error } = parsedContent;
 
         if (method) {
-            return { id, pubkey: event.pubkey, method, params, event };
+            return { id, pubkey: remotePubkeyHex, method, params, event };
         }
         return { id, result, error, event };
     }
@@ -162,10 +170,15 @@ export class NDKNostrRpc extends EventEmitter {
 
         const localUser = await this.signer.user();
         const remoteUser = this.ndk.getUser({ pubkey: remotePubkey });
+        const remoteUid = /^[a-f0-9]{64}$/i.test(remotePubkey) ? bytesToHex(sha256(hexToBytes(remotePubkey))) : remotePubkey;
         const tags: string[][] = [
             ["p", remotePubkey],
             ["policy", "allow", "user", remotePubkey],
         ];
+        if (remoteUid !== remotePubkey) {
+            tags.push(["p", remoteUid]);
+            tags.push(["policy", "allow", "user", remoteUid]);
+        }
         if (extraTags) {
             tags.push(...extraTags);
         }
@@ -173,8 +186,10 @@ export class NDKNostrRpc extends EventEmitter {
             kind,
             content: JSON.stringify(res),
             tags,
-            pubkey: localUser.pubkey,
         } as NostrEvent);
+        const localKeyBytes = hexToBytes(localUser.pubkey);
+        event.uid = bytesToHex(sha256(localKeyBytes));
+        event.key = `secp256k1-schnorr:${base64.encode(localKeyBytes)}`;
 
         event.content = await this.signer.encrypt(remoteUser, event.content, this.encryptionType);
         await event.sign(this.signer);
@@ -199,6 +214,7 @@ export class NDKNostrRpc extends EventEmitter {
         const id = Math.random().toString(36).substring(7);
         const localUser = await this.signer.user();
         const remoteUser = this.ndk.getUser({ pubkey: remotePubkey });
+        const remoteUid = /^[a-f0-9]{64}$/i.test(remotePubkey) ? bytesToHex(sha256(hexToBytes(remotePubkey))) : remotePubkey;
         const request = { id, method, params };
         const promise = new Promise<NDKRpcResponse>(() => {
             const responseHandler = (response: NDKRpcResponse) => {
@@ -213,15 +229,23 @@ export class NDKNostrRpc extends EventEmitter {
             this.once(`response-${id}`, responseHandler);
         });
 
+        const reqTags: string[][] = [
+            ["p", remotePubkey],
+            ["policy", "allow", "user", remotePubkey],
+        ];
+        if (remoteUid !== remotePubkey) {
+            reqTags.push(["p", remoteUid]);
+            reqTags.push(["policy", "allow", "user", remoteUid]);
+        }
+
         const event = new NDKEvent(this.ndk, {
             kind,
             content: JSON.stringify(request),
-            tags: [
-                ["p", remotePubkey],
-                ["policy", "allow", "user", remotePubkey],
-            ],
-            pubkey: localUser.pubkey,
+            tags: reqTags,
         } as NostrEvent);
+        const localKeyBytes = hexToBytes(localUser.pubkey);
+        event.uid = bytesToHex(sha256(localKeyBytes));
+        event.key = `secp256k1-schnorr:${base64.encode(localKeyBytes)}`;
 
         event.content = await this.signer.encrypt(remoteUser, event.content, this.encryptionType);
         await event.sign(this.signer);

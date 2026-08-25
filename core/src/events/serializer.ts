@@ -37,9 +37,19 @@ function validateForSerialization(event: NDKEvent | NostrEvent): void {
             `Can't serialize event with invalid properties: created_at (must be number, got ${typeof event.created_at}). Event: ${getEventDetails(event)}`,
         );
     }
-    if (typeof event.pubkey !== "string") {
+    if (typeof event.uid !== "string") {
         throw new Error(
-            `Can't serialize event with invalid properties: pubkey (must be string, got ${typeof event.pubkey}). Event: ${getEventDetails(event)}`,
+            `Can't serialize event with invalid properties: uid (must be string, got ${typeof (event as any).uid}). Event: ${getEventDetails(event)}`,
+        );
+    }
+    if (event.kid !== undefined && typeof event.kid !== "string") {
+        throw new Error(
+            `Can't serialize event with invalid properties: kid (must be string if defined, got ${typeof event.kid}). Event: ${getEventDetails(event)}`,
+        );
+    }
+    if (event.key !== undefined && typeof event.key !== "string") {
+        throw new Error(
+            `Can't serialize event with invalid properties: key (must be string if defined, got ${typeof event.key}). Event: ${getEventDetails(event)}`,
         );
     }
     if (!Array.isArray(event.tags)) {
@@ -86,10 +96,23 @@ function getSerializationPrefix(): number {
 export function serialize(this: NDKEvent | NostrEvent, includeSig = false, includeId = false): NDKEventSerialized {
     validateForSerialization(this);
 
-    const payload = [getSerializationPrefix(), this.pubkey, this.created_at, this.kind, this.tags, this.content];
-    if (includeSig) payload.push(this.sig);
-    if (includeId) payload.push(this.id);
+    const payload: any[] = [
+        getSerializationPrefix(),
+        this.uid,
+        this.created_at,
+        this.kind,
+        this.tags,
+        this.content,
+        this.kid ?? "",
+        this.key ?? "",
+    ];
+    if (includeSig) payload.push(this.sig ?? "");
+    if (includeId) payload.push(this.id ?? "");
     return JSON.stringify(payload);
+}
+
+export function serializeEvent(event: NostrEvent | NDKEvent, includeSig = false, includeId = false): NDKEventSerialized {
+    return serialize.call(event, includeSig, includeId);
 }
 
 /**
@@ -100,32 +123,24 @@ export function serialize(this: NDKEvent | NostrEvent, includeSig = false, inclu
 export function deserialize(serializedEvent: NDKEventSerialized): NostrEvent {
     const eventArray = JSON.parse(serializedEvent);
     const ret: NostrEvent = {
-        pubkey: eventArray[1],
+        uid: eventArray[1],
         created_at: eventArray[2],
         kind: eventArray[3],
         tags: eventArray[4],
         content: eventArray[5],
     };
 
-    if (eventArray.length >= 7) {
-        const first = eventArray[6];
-        const second = eventArray[7];
-
-        if (first && first.length === 128) {
-            // it's a signature
-            ret.sig = first;
-            if (second && second.length === 64) {
-                // it's an id
-                ret.id = second;
-            }
-        } else if (first && first.length === 64) {
-            // it's an id
-            ret.id = first;
-            if (second && second.length === 128) {
-                // it's a signature
-                ret.sig = second;
-            }
-        }
+    if (eventArray[6]) {
+        ret.kid = eventArray[6];
+    }
+    if (eventArray[7]) {
+        ret.key = eventArray[7];
+    }
+    if (eventArray[8]) {
+        ret.sig = eventArray[8];
+    }
+    if (eventArray[9]) {
+        ret.id = eventArray[9];
     }
 
     return ret;

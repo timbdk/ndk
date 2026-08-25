@@ -14,7 +14,7 @@ export function matchFilter(filter: NDKFilter, event: NDKRawEvent | NostrEvent):
     if (filter.kinds && (event.kind === undefined || filter.kinds.indexOf(event.kind as any) === -1)) {
         return false;
     }
-    if (filter.authors && filter.authors.indexOf(event.pubkey) === -1) {
+    if (filter.authors && filter.authors.indexOf(event.uid) === -1) {
         return false;
     }
 

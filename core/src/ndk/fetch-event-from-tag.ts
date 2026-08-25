@@ -89,14 +89,14 @@ export async function fetchEventFromTag(
 
     // Check if we have a relay list for the author of the original event
     // and prefer to use those relays
-    const authorRelays = getRelaysForSync(this, originalEvent.pubkey);
+    const authorRelays = getRelaysForSync(this, originalEvent.uid);
     if (authorRelays && authorRelays.size > 0) {
         d("fetching event from author relays %o", Array.from(authorRelays));
         const relaySet = NDKRelaySet.fromRelayUrls(Array.from(authorRelays), this);
         const event = await this.fetchEvent(id, subOpts, relaySet);
         if (event) return event;
     } else {
-        d("no author relays found for %s", originalEvent.pubkey, originalEvent);
+        d("no author relays found for %s", originalEvent.uid, originalEvent);
     }
 
     // Attempt without relay hint on whatever NDK calculates
