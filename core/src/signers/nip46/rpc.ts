@@ -141,9 +141,13 @@ export class NDKNostrRpc extends EventEmitter {
         try {
             decryptedContent = await this.signer.decrypt(remoteUser, event.content, this.encryptionType);
         } catch (_e) {
-            const otherEncryptionType = this.encryptionType === "nip04" ? "nip44" : "nip04";
-            decryptedContent = await this.signer.decrypt(remoteUser, event.content, otherEncryptionType);
-            this.encryptionType = otherEncryptionType;
+            try {
+                const otherEncryptionType = this.encryptionType === "nip04" ? "nip44" : "nip04";
+                decryptedContent = await this.signer.decrypt(remoteUser, event.content, otherEncryptionType);
+                this.encryptionType = otherEncryptionType;
+            } catch {
+                throw new Error("Failed to decrypt NIP-46 payload");
+            }
         }
 
         const parsedContent = JSON.parse(decryptedContent);
@@ -216,13 +220,20 @@ export class NDKNostrRpc extends EventEmitter {
         const remoteUser = this.ndk.getUser({ pubkey: remotePubkey });
         const remoteUid = /^[a-f0-9]{64}$/i.test(remotePubkey) ? bytesToHex(sha256(hexToBytes(remotePubkey))) : remotePubkey;
         const request = { id, method, params };
-        const promise = new Promise<NDKRpcResponse>(() => {
+        const promise = new Promise<NDKRpcResponse>((resolve, reject) => {
             const responseHandler = (response: NDKRpcResponse) => {
                 if (response.result === "auth_url") {
                     this.once(`response-${id}`, responseHandler);
                     this.emit("authUrl", response.error);
-                } else if (cb) {
-                    cb(response);
+                } else {
+                    if (cb) {
+                        cb(response);
+                    }
+                    if (response.error) {
+                        reject(new Error(response.error));
+                    } else {
+                        resolve(response);
+                    }
                 }
             };
 

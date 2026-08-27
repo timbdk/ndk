@@ -127,7 +127,7 @@ export class NDKNip46Signer extends EventEmitter implements NDKSigner {
      */
     public constructor(
         ndk: NDK,
-        userOrConnectionToken?: string | false,
+        userOrConnectionToken?: string | NDKUser | false,
         localSigner?: NDKPrivateKeySigner | string,
         relayUrls?: string[],
         nostrConnectOptions?: NostrConnectOptions,
@@ -151,9 +151,18 @@ export class NDKNip46Signer extends EventEmitter implements NDKSigner {
         if (userOrConnectionToken === false) {
         } else if (!userOrConnectionToken) {
             this.nostrconnectFlowInit(nostrConnectOptions);
-        } else if (userOrConnectionToken.startsWith("bunker://")) {
+        } else if (typeof userOrConnectionToken === "object") {
+            const uid = (userOrConnectionToken as any).uid || userOrConnectionToken.pubkey;
+            this.bunkerPubkey = uid;
+            this.userPubkey = uid;
+            this._user = userOrConnectionToken;
+        } else if (typeof userOrConnectionToken === "string" && userOrConnectionToken.startsWith("bunker://")) {
             this.bunkerFlowInit(userOrConnectionToken);
-        } else {
+        } else if (typeof userOrConnectionToken === "string" && /^[0-9a-fA-F]{64}$/.test(userOrConnectionToken)) {
+            this.bunkerPubkey = userOrConnectionToken;
+            this.userPubkey = userOrConnectionToken;
+            this._user = this.ndk.getUser({ pubkey: userOrConnectionToken });
+        } else if (typeof userOrConnectionToken === "string") {
             this.nip05Init(userOrConnectionToken);
         }
 
