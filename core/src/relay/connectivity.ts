@@ -613,7 +613,7 @@ export class NDKRelayConnectivity {
                         this.ndk?.once("signer:ready", authenticate);
                     } else {
                         authenticate().catch((e) => {
-                            console.error("Error authenticating", e);
+                            this.debug("Error authenticating", e);
                         });
                     }
                 }
@@ -858,7 +858,7 @@ export class NDKRelayConnectivity {
         const ret = new Promise<string>((resolve, reject) => {
             const val = this.openEventPublishes.get(event.id!) ?? [];
             if (val.length > 0) {
-                console.warn(`Duplicate event publishing detected, you are publishing event ${event.id!} twice`);
+                this.debug(`Duplicate event publishing detected, you are publishing event ${event.id!} twice`);
             }
 
             val.push({ resolve, reject });
