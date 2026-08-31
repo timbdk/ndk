@@ -90,6 +90,7 @@
     "@codesandbox/sandpack-client": "^2.19.8",
     "@noble/curves": "^2.0.0",
     "@noble/hashes": "^2.0.0",
+    "@noble/post-quantum": "0.7.0",
     "@noble/secp256k1": "^2.1.0",
     "@scure/base": "^1.1.9",
     "debug": "^4.3.7",

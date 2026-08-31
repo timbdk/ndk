@@ -95,3 +95,7 @@ export interface NDKSignerStatic<T extends NDKSigner> {
      */
     fromPayload(payload: string, ndk?: NDK): Promise<T>;
 }
+
+export { NDKPrivateKeySigner } from "./private-key/index.js";
+export { NDKMlDsaSigner } from "./ml-dsa/index.js";
+export { NDKTransportCredential } from "./transport-credential/index.js";

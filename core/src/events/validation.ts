@@ -1,4 +1,5 @@
 import { schnorr } from "@noble/curves/secp256k1.js";
+import { ml_dsa44 } from "@noble/post-quantum/ml-dsa.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
 import { base64 } from "@scure/base";
@@ -100,6 +101,7 @@ export function verifySignature(this: NDKEvent, persist: boolean): boolean | und
                     this.signatureVerified = false;
                     return false;
                 }
+                const alg = this.key.substring(0, colonIdx);
                 const b64 = this.key.substring(colonIdx + 1);
                 const keyBytes = base64.decode(b64);
                 const computedUid = bytesToHex(sha256(keyBytes));
@@ -109,8 +111,13 @@ export function verifySignature(this: NDKEvent, persist: boolean): boolean | und
                 }
 
                 const hash = sha256(new TextEncoder().encode(this.serialize()));
-                const sigBytes = hexToBytes(this.sig as string);
-                const res = schnorr.verify(sigBytes, hash, keyBytes);
+                const sigBytes = typeof this.sig === "string" ? (this.sig.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(this.sig) ? hexToBytes(this.sig) : base64.decode(this.sig)) : this.sig;
+                let res = false;
+                if (alg === "ml-dsa-44") {
+                    res = ml_dsa44.verify(sigBytes, hash, keyBytes);
+                } else if (alg === "secp256k1-schnorr") {
+                    res = schnorr.verify(sigBytes, hash, keyBytes);
+                }
                 if (res) verifiedSignatures.set(this.id, this.sig!);
                 else verifiedSignatures.set(this.id, false);
                 this.signatureVerified = res;

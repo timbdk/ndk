@@ -81,6 +81,8 @@ export * from "./signers/nip46/backend/index.js";
 export * from "./signers/nip46/index.js";
 export * from "./signers/nip46/rpc.js";
 export * from "./signers/private-key/index.js";
+export * from "./signers/ml-dsa/index.js";
+export * from "./signers/transport-credential/index.js";
 export { registerSigner } from "./signers/registry.js";
 export * from "./subscription/grouping.js";
 export * from "./subscription/index.js";
