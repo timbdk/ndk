@@ -49,7 +49,8 @@ async function signAndAuth(
         const signerUser = await signer.user();
         const pubkeyBytes = hexToBytes(signerUser.pubkey);
         event.uid = bytesToHex(sha256(pubkeyBytes));
-        event.key = `secp256k1-schnorr:${base64.encode(pubkeyBytes)}`;
+        const alg = pubkeyBytes.length === 1312 ? "ml-dsa-44" : "secp256k1-schnorr";
+        event.key = `${alg}:${base64.encode(pubkeyBytes)}`;
         await event.sign(signer);
         resolve(event);
     } catch (e) {

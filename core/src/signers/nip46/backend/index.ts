@@ -104,10 +104,10 @@ export class NDKNip46Backend {
 
         if (privateKeyOrSigner instanceof Uint8Array) {
             this.signer = new NDKPrivateKeySigner(privateKeyOrSigner as Uint8Array);
-        } else if (privateKeyOrSigner instanceof String) {
-            this.signer = new NDKPrivateKeySigner(hexToBytes(privateKeyOrSigner as string));
-        } else if (privateKeyOrSigner instanceof NDKPrivateKeySigner) {
-            this.signer = privateKeyOrSigner as NDKPrivateKeySigner;
+        } else if (typeof privateKeyOrSigner === "string" || privateKeyOrSigner instanceof String) {
+            this.signer = new NDKPrivateKeySigner(hexToBytes(privateKeyOrSigner.toString()));
+        } else if (typeof (privateKeyOrSigner as any)?.sign === "function") {
+            this.signer = privateKeyOrSigner as NDKSigner;
         } else {
             throw new Error("Invalid signer");
         }
@@ -124,15 +124,22 @@ export class NDKNip46Backend {
      */
     public async start() {
         this.localUser = await this.signer.user();
-        const pTags = [this.localUser.pubkey];
+        const pTags: string[] = [];
+        if (/^[a-f0-9]{64}$/i.test(this.localUser.pubkey)) {
+            pTags.push(this.localUser.pubkey);
+        }
         try {
-            if (/^[a-f0-9]{64}$/i.test(this.localUser.pubkey)) {
+            if (/^[a-f0-9]+$/i.test(this.localUser.pubkey)) {
                 const localKeyBytes = hexToBytes(this.localUser.pubkey);
                 const uid = bytesToHex(sha256(localKeyBytes));
                 if (!pTags.includes(uid)) pTags.push(uid);
             }
         } catch {
             // ignore
+        }
+        const ecdhPubkey = (this.signer as any).ecdhSigner?.pubkey;
+        if (ecdhPubkey && !pTags.includes(ecdhPubkey)) {
+            pTags.push(ecdhPubkey);
         }
 
         this.ndk.subscribe(
@@ -179,8 +186,13 @@ export class NDKNip46Backend {
     }
 
     protected async handleIncomingEvent(event: NDKEvent) {
+        const parsed = await this.rpc.parseEvent(event);
+        if (!parsed) {
+            this.debug("could not parse or decrypt incoming event", event.rawEvent());
+            return;
+        }
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { id, method, params, pubkey } = (await this.rpc.parseEvent(event)) as any;
+        const { id, method, params, pubkey } = parsed as any;
         const remotePubkey = pubkey ?? event.uid;
         let response: string | undefined;
         let errorHandled = false;

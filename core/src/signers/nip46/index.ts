@@ -158,8 +158,11 @@ export class NDKNip46Signer extends EventEmitter implements NDKSigner {
             this._user = userOrConnectionToken;
         } else if (typeof userOrConnectionToken === "string" && userOrConnectionToken.startsWith("bunker://")) {
             this.bunkerFlowInit(userOrConnectionToken);
-        } else if (typeof userOrConnectionToken === "string" && /^[0-9a-fA-F]{64}$/.test(userOrConnectionToken)) {
-            this.bunkerPubkey = userOrConnectionToken;
+        } else if (typeof userOrConnectionToken === "string" && (/^[0-9a-fA-F]{64}$/.test(userOrConnectionToken) || /^[0-9a-fA-F]{2624}$/.test(userOrConnectionToken))) {
+            const uid = userOrConnectionToken.length === 2624
+                ? bytesToHex(sha256(hexToBytes(userOrConnectionToken)))
+                : userOrConnectionToken;
+            this.bunkerPubkey = uid;
             this.userPubkey = userOrConnectionToken;
             this._user = this.ndk.getUser({ pubkey: userOrConnectionToken });
         } else if (typeof userOrConnectionToken === "string") {
@@ -167,6 +170,7 @@ export class NDKNip46Signer extends EventEmitter implements NDKSigner {
         }
 
         this.rpc = new NDKNostrRpc(this.ndk, this.localSigner, this.debug, this.relayUrls);
+        if (this.bunkerPubkey) this.rpc.bunkerPubkey = this.bunkerPubkey;
     }
 
     /**
@@ -358,6 +362,7 @@ export class NDKNip46Signer extends EventEmitter implements NDKSigner {
         } else if (!this.bunkerPubkey) {
             throw new Error("Bunker pubkey not set");
         }
+        this.rpc.bunkerPubkey = this.bunkerPubkey;
 
         await this.startListening();
 

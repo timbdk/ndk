@@ -1,8 +1,10 @@
 import type { Debugger } from "debug";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
 import { GuardrailCheckId } from "../ai-guardrails/index.js";
 import type { NDK } from "../ndk/index.js";
 import type { NDKFilter } from "../subscription/index.js";
-import { isValidHex64 } from "./validation.js";
+import { isValidHex64, isValidPubkey } from "./validation.js";
 
 /**
  * Filter validation modes for NDK subscriptions.
@@ -132,8 +134,9 @@ function processFilter(
 
     // Process 'authors' array - must be 64-character hex strings (pubkeys)
     if (filter.authors) {
+        const authors = filter.authors;
         const validAuthors: string[] = [];
-        filter.authors.forEach((author, idx) => {
+        authors.forEach((author, idx) => {
             if (author === undefined) {
                 if (isValidating) {
                     issues.push(`Filter[${filterIndex}].authors[${idx}] is undefined`);
@@ -146,16 +149,22 @@ function processFilter(
                 } else {
                     debug?.(`Fixed: Removed non-string value at authors[${idx}] (was ${typeof author})`);
                 }
-            } else if (!isValidHex64(author)) {
+            } else if (isValidHex64(author)) {
+                validAuthors.push(author);
+            } else if (author.length === 2624 && /^[a-f0-9]+$/i.test(author)) {
+                const uid = bytesToHex(sha256(hexToBytes(author)));
+                validAuthors.push(uid);
+                if (!isValidating) {
+                    authors[idx] = uid;
+                }
+            } else {
                 if (isValidating) {
                     issues.push(
-                        `Filter[${filterIndex}].authors[${idx}] is not a valid 64-char hex pubkey: "${author}"`,
+                        `Filter[${filterIndex}].authors[${idx}] is not a valid 64-char or 2624-char hex pubkey: "${author}"`,
                     );
                 } else {
                     debug?.(`Fixed: Removed invalid hex pubkey at authors[${idx}]`);
                 }
-            } else {
-                validAuthors.push(author);
             }
         });
 
@@ -223,13 +232,35 @@ function processFilter(
                         }
                     } else {
                         // For #e and #p tags, validate as hex strings
-                        if ((key === "#e" || key === "#p") && !isValidHex64(value)) {
-                            if (isValidating) {
-                                issues.push(
-                                    `Filter[${filterIndex}].${key}[${idx}] is not a valid 64-char hex string: "${value}"`,
-                                );
+                        if (key === "#e") {
+                            if (!isValidHex64(value)) {
+                                if (isValidating) {
+                                    issues.push(
+                                        `Filter[${filterIndex}].${key}[${idx}] is not a valid 64-char hex string: "${value}"`,
+                                    );
+                                } else {
+                                    debug?.(`Fixed: Removed invalid hex string at ${key}[${idx}]`);
+                                }
                             } else {
-                                debug?.(`Fixed: Removed invalid hex string at ${key}[${idx}]`);
+                                validValues.push(value);
+                            }
+                        } else if (key === "#p") {
+                            if (isValidHex64(value)) {
+                                validValues.push(value);
+                            } else if (value.length === 2624 && /^[a-f0-9]+$/i.test(value)) {
+                                const uid = bytesToHex(sha256(hexToBytes(value)));
+                                validValues.push(uid);
+                                if (!isValidating) {
+                                    tagValues[idx] = uid;
+                                }
+                            } else {
+                                if (isValidating) {
+                                    issues.push(
+                                        `Filter[${filterIndex}].${key}[${idx}] is not a valid 64-char or 2624-char hex string: "${value}"`,
+                                    );
+                                } else {
+                                    debug?.(`Fixed: Removed invalid hex string at ${key}[${idx}]`);
+                                }
                             }
                         } else {
                             validValues.push(value);
@@ -344,11 +375,11 @@ function runAIGuardrailsForFilter(filter: NDKFilter, filterIndex: number, ndk: N
                     );
                 }
                 // Then check for any invalid hex string (catches garbage data from follow lists)
-                else if (!isValidHex64(author)) {
+                else if (!isValidPubkey(author)) {
                     guards.error(
                         GuardrailCheckId.FILTER_INVALID_HEX,
-                        `Filter[${filterIndex}].authors[${idx}] is not a valid 64-char hex pubkey: "${author}"`,
-                        `Kind:3 follow lists can contain invalid entries like labels ("Follow List"), partial strings ("highlig"), or other corrupted data. You MUST validate all pubkeys before using them in filters.\n\n   Example:\n   const validPubkeys = pubkeys.filter(p => /^[0-9a-f]{64}$/i.test(p));\n   ndk.subscribe({ authors: validPubkeys, kinds: [1] });`,
+                        `Filter[${filterIndex}].authors[${idx}] is not a valid 64-char or 2624-char hex pubkey: "${author}"`,
+                        `Kind:3 follow lists can contain invalid entries like labels ("Follow List"), partial strings ("highlig"), or other corrupted data. You MUST validate all pubkeys before using them in filters.\n\n   Example:\n   const validPubkeys = pubkeys.filter(p => /^[0-9a-f]{64}$|^[0-9a-f]{2624}$/i.test(p));\n   ndk.subscribe({ authors: validPubkeys, kinds: [1] });`,
                         false, // Fatal error - cannot be disabled
                     );
                 }
@@ -364,7 +395,7 @@ function runAIGuardrailsForFilter(filter: NDKFilter, filterIndex: number, ndk: N
                 tagValues.forEach((value, idx) => {
                     if (typeof value === "string") {
                         // For #e and #p tags, validate hex format
-                        if (key === "#e" || key === "#p") {
+                        if (key === "#e") {
                             // Check for bech32 first (more specific error message)
                             if (bech32Regex.test(value)) {
                                 guards.error(
@@ -379,7 +410,26 @@ function runAIGuardrailsForFilter(filter: NDKFilter, filterIndex: number, ndk: N
                                 guards.error(
                                     GuardrailCheckId.FILTER_INVALID_HEX,
                                     `Filter[${filterIndex}].${key}[${idx}] is not a valid 64-char hex string: "${value}"`,
-                                    `${key === "#e" ? "Event IDs" : "Public keys"} in tag filters must be 64-character hexadecimal strings. Kind:3 follow lists and other user-generated content can contain invalid data. Always filter before using:\n\n   const validValues = values.filter(v => /^[0-9a-f]{64}$/i.test(v));`,
+                                    `Event IDs in tag filters must be 64-character hexadecimal strings. Kind:3 follow lists and other user-generated content can contain invalid data. Always filter before using:\n\n   const validValues = values.filter(v => /^[0-9a-f]{64}$/i.test(v));`,
+                                    false, // Fatal error - cannot be disabled
+                                );
+                            }
+                        } else if (key === "#p") {
+                            // Check for bech32 first (more specific error message)
+                            if (bech32Regex.test(value)) {
+                                guards.error(
+                                    GuardrailCheckId.FILTER_BECH32_IN_ARRAY,
+                                    `Filter[${filterIndex}].${key}[${idx}] contains bech32: "${value}". Tag values must be decoded.`,
+                                    `Use filterFromId() or nip19.decode() to get the hex value first.`,
+                                    false, // Fatal error - cannot be disabled
+                                );
+                            }
+                            // Then check for any invalid hex pubkey
+                            else if (!isValidPubkey(value)) {
+                                guards.error(
+                                    GuardrailCheckId.FILTER_INVALID_HEX,
+                                    `Filter[${filterIndex}].${key}[${idx}] is not a valid 64-char or 2624-char hex pubkey: "${value}"`,
+                                    `Public keys in tag filters must be 64-character or 2624-character hexadecimal strings. Kind:3 follow lists and other user-generated content can contain invalid data. Always filter before using:\n\n   const validValues = values.filter(v => /^[0-9a-f]{64}$|^[0-9a-f]{2624}$/i.test(v));`,
                                     false, // Fatal error - cannot be disabled
                                 );
                             }

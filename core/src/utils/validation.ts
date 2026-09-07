@@ -22,7 +22,7 @@ export function isValidHex64(value: string): boolean {
 }
 
 /**
- * Validates if a string is a valid nostr pubkey (64-character hex string).
+ * Validates if a string is a valid nostr pubkey (64-character hex string or 2624-character ML-DSA hex string).
  *
  * @param pubkey - The string to validate
  * @returns true if the string is a valid pubkey, false otherwise
@@ -35,7 +35,14 @@ export function isValidHex64(value: string): boolean {
  * ```
  */
 export function isValidPubkey(pubkey: string): boolean {
-    return isValidHex64(pubkey);
+    if (typeof pubkey !== "string") return false;
+    if (pubkey.length === 64) {
+        return isValidHex64(pubkey);
+    }
+    if (pubkey.length === 2624) {
+        return /^[a-f0-9]+$/i.test(pubkey);
+    }
+    return false;
 }
 
 /**
