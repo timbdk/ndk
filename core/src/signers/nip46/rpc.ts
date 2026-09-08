@@ -34,6 +34,7 @@ export class NDKNostrRpc extends EventEmitter {
     private debug: debug.Debugger;
     public encryptionType: "nip04" | "nip44" = "nip44";
     public bunkerPubkey?: string;
+    public adminEcdhPubkeys?: Map<string, string>;
     private pool: NDKPool | undefined;
 
     public constructor(ndk: NDK, signer: NDKSigner, debug: debug.Debugger, relayUrls?: string[]) {
@@ -139,6 +140,14 @@ export class NDKNostrRpc extends EventEmitter {
                 // fallback
             }
         }
+        if (!isSecp256k1 && this.adminEcdhPubkeys) {
+            const authorUid = (event as any).uid ?? event.pubkey;
+            const mappedEcdh = this.adminEcdhPubkeys.get(authorUid);
+            if (mappedEcdh) {
+                remotePubkeyHex = mappedEcdh;
+                isSecp256k1 = true;
+            }
+        }
         if ((!isSecp256k1 || remotePubkeyHex.length !== 64) && this.bunkerPubkey) {
             remotePubkeyHex = this.bunkerPubkey;
         }
@@ -201,6 +210,14 @@ export class NDKNostrRpc extends EventEmitter {
         if (remoteUid !== targetP) {
             tags.push(["p", remoteUid]);
             tags.push(["policy", "allow", "user", remoteUid]);
+        }
+        if (this.adminEcdhPubkeys) {
+            for (const [uid, ecdh] of this.adminEcdhPubkeys.entries()) {
+                if (ecdh === remotePubkey && uid !== targetP && uid !== remoteUid) {
+                    tags.push(["p", uid]);
+                    tags.push(["policy", "allow", "user", uid]);
+                }
+            }
         }
         if (extraTags) {
             tags.push(...extraTags);
