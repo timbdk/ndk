@@ -273,8 +273,8 @@ export class NDKNip46Signer extends EventEmitter implements NDKSigner {
 
         const pTags = [localUser.pubkey];
         try {
-            if (/^[a-f0-9]{64}$/i.test(localUser.pubkey)) {
-                const localKeyBytes = hexToBytes(localUser.pubkey);
+            const localKeyBytes = hexToBytes(localUser.pubkey);
+            if (localKeyBytes.length !== 32) {
                 const uid = bytesToHex(sha256(localKeyBytes));
                 if (!pTags.includes(uid)) pTags.push(uid);
             }
@@ -374,6 +374,12 @@ export class NDKNip46Signer extends EventEmitter implements NDKSigner {
             const connectParams = [this.userPubkey ?? ""];
 
             if (this.secret) connectParams.push(this.secret);
+
+            const encPubkeyBase64 = (this.localSigner as any)?.encPublicKeyBase64;
+            if (encPubkeyBase64) {
+                if (!this.secret) connectParams.push("");
+                connectParams.push(encPubkeyBase64);
+            }
 
             if (!this.bunkerPubkey) throw new Error("Bunker pubkey not set");
 

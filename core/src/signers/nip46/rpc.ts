@@ -35,6 +35,8 @@ export class NDKNostrRpc extends EventEmitter {
     public encryptionType: "nip04" | "nip44" = "nip44";
     public bunkerPubkey?: string;
     public adminEcdhPubkeys?: Map<string, string>;
+    public peerEcdhPubkeys: Map<string, string> = new Map();
+    public resolvePeerEcdhPubkey?: (authorUid: string) => Promise<string | undefined> | string | undefined;
     private pool: NDKPool | undefined;
 
     public constructor(ndk: NDK, signer: NDKSigner, debug: debug.Debugger, relayUrls?: string[]) {
@@ -127,7 +129,8 @@ export class NDKNostrRpc extends EventEmitter {
             this.encryptionType = "nip44";
         }
 
-        let remotePubkeyHex = (event as any).uid ?? event.pubkey;
+        const authorUid = (event as any).uid ?? event.pubkey;
+        let remotePubkeyHex = authorUid;
         let isSecp256k1 = false;
         if (event.key && event.key.includes(":")) {
             try {
@@ -140,10 +143,42 @@ export class NDKNostrRpc extends EventEmitter {
                 // fallback
             }
         }
+        if (!isSecp256k1) {
+            const encTag = event.tags?.find((t: string[]) => t[0] === "enc");
+            if (encTag && encTag[1]) {
+                try {
+                    const decoded = base64.decode(encTag[1]);
+                    if (decoded.length === 32) {
+                        const encHex = bytesToHex(decoded);
+                        this.peerEcdhPubkeys.set(authorUid, encHex);
+                        remotePubkeyHex = encHex;
+                        isSecp256k1 = true;
+                    }
+                } catch {
+                    // fallback
+                }
+            }
+        }
+        if (!isSecp256k1 && this.resolvePeerEcdhPubkey) {
+            try {
+                const resolved = await this.resolvePeerEcdhPubkey(authorUid);
+                if (resolved) {
+                    this.peerEcdhPubkeys.set(authorUid, resolved);
+                    remotePubkeyHex = resolved;
+                    isSecp256k1 = true;
+                }
+            } catch {
+                // fallback
+            }
+        }
+        if (!isSecp256k1 && this.peerEcdhPubkeys.has(authorUid)) {
+            remotePubkeyHex = this.peerEcdhPubkeys.get(authorUid)!;
+            isSecp256k1 = true;
+        }
         if (!isSecp256k1 && this.adminEcdhPubkeys) {
-            const authorUid = (event as any).uid ?? event.pubkey;
             const mappedEcdh = this.adminEcdhPubkeys.get(authorUid);
             if (mappedEcdh) {
+                this.peerEcdhPubkeys.set(authorUid, mappedEcdh);
                 remotePubkeyHex = mappedEcdh;
                 isSecp256k1 = true;
             }
@@ -172,7 +207,7 @@ export class NDKNostrRpc extends EventEmitter {
         const { id, method, params, result, error } = parsedContent;
 
         if (method) {
-            return { id, pubkey: remotePubkeyHex, method, params, event };
+            return { id, pubkey: authorUid, method, params, event };
         }
         return { id, result, error, event };
     }
@@ -199,9 +234,37 @@ export class NDKNostrRpc extends EventEmitter {
         }
 
         const localUser = await this.signer.user();
-        const remoteUser = this.ndk.getUser({ pubkey: remotePubkey });
         const remoteKeyBytes = hexToBytes(remotePubkey);
-        const remoteUid = bytesToHex(sha256(remoteKeyBytes));
+        const remoteUid = remoteKeyBytes.length === 32 ? remotePubkey : bytesToHex(sha256(remoteKeyBytes));
+
+        let encTargetPubkey = remotePubkey;
+        if (this.resolvePeerEcdhPubkey) {
+            let resolved = await this.resolvePeerEcdhPubkey(remotePubkey);
+            if (!resolved && remoteUid !== remotePubkey) {
+                resolved = await this.resolvePeerEcdhPubkey(remoteUid);
+            }
+            if (resolved) {
+                encTargetPubkey = resolved;
+            }
+        }
+        if (encTargetPubkey === remotePubkey && this.peerEcdhPubkeys.has(remotePubkey)) {
+            encTargetPubkey = this.peerEcdhPubkeys.get(remotePubkey)!;
+        } else if (encTargetPubkey === remotePubkey && this.peerEcdhPubkeys.has(remoteUid)) {
+            encTargetPubkey = this.peerEcdhPubkeys.get(remoteUid)!;
+        }
+        if (encTargetPubkey === remotePubkey && this.adminEcdhPubkeys?.has(remotePubkey)) {
+            encTargetPubkey = this.adminEcdhPubkeys.get(remotePubkey)!;
+        } else if (encTargetPubkey === remotePubkey && this.adminEcdhPubkeys?.has(remoteUid)) {
+            encTargetPubkey = this.adminEcdhPubkeys.get(remoteUid)!;
+        }
+
+        if (encTargetPubkey === remotePubkey && (remotePubkey.length === 2624 || remoteKeyBytes.length === 32)) {
+            throw new Error(
+                `Cannot send NIP-46 response to ${remotePubkey}: no ECDH encryption public key resolved for peer`
+            );
+        }
+
+        const remoteUser = this.ndk.getUser({ pubkey: encTargetPubkey });
         const targetP = remotePubkey.length === 2624 ? remoteUid : remotePubkey;
         const tags: string[][] = [
             ["p", targetP],
@@ -219,6 +282,10 @@ export class NDKNostrRpc extends EventEmitter {
                 }
             }
         }
+        const encPubkeyBase64 = (this.signer as any)?.encPublicKeyBase64;
+        if (encPubkeyBase64) {
+            tags.push(["enc", encPubkeyBase64]);
+        }
         if (extraTags) {
             tags.push(...extraTags);
         }
@@ -229,8 +296,10 @@ export class NDKNostrRpc extends EventEmitter {
         } as NostrEvent);
         const localKeyBytes = hexToBytes(localUser.pubkey);
         event.uid = bytesToHex(sha256(localKeyBytes));
-        const alg = localKeyBytes.length === 1312 ? 'ml-dsa-44' : 'secp256k1-schnorr';
-        event.key = `${alg}:${base64.encode(localKeyBytes)}`;
+        if (localKeyBytes.length !== 1312) {
+            throw new Error(`NDKNostrRpc requires an ML-DSA-44 signer, got key length ${localKeyBytes.length}`);
+        }
+        event.key = `ml-dsa-44:${base64.encode(localKeyBytes)}`;
 
         event.content = await this.signer.encrypt(remoteUser, event.content, this.encryptionType);
         await event.sign(this.signer);
@@ -256,7 +325,7 @@ export class NDKNostrRpc extends EventEmitter {
         const localUser = await this.signer.user();
         const remoteUser = this.ndk.getUser({ pubkey: remotePubkey });
         const remoteKeyBytes = hexToBytes(remotePubkey);
-        const remoteUid = bytesToHex(sha256(remoteKeyBytes));
+        const remoteUid = remoteKeyBytes.length === 32 ? remotePubkey : bytesToHex(sha256(remoteKeyBytes));
         const request = { id, method, params };
         const promise = new Promise<NDKRpcResponse>((resolve, reject) => {
             const responseHandler = (response: NDKRpcResponse) => {
@@ -287,6 +356,10 @@ export class NDKNostrRpc extends EventEmitter {
             reqTags.push(["p", remoteUid]);
             reqTags.push(["policy", "allow", "user", remoteUid]);
         }
+        const encPubkeyBase64 = (this.signer as any)?.encPublicKeyBase64;
+        if (encPubkeyBase64) {
+            reqTags.push(["enc", encPubkeyBase64]);
+        }
 
         const event = new NDKEvent(this.ndk, {
             kind,
@@ -295,8 +368,10 @@ export class NDKNostrRpc extends EventEmitter {
         } as NostrEvent);
         const localKeyBytes = hexToBytes(localUser.pubkey);
         event.uid = bytesToHex(sha256(localKeyBytes));
-        const alg = localKeyBytes.length === 1312 ? 'ml-dsa-44' : 'secp256k1-schnorr';
-        event.key = `${alg}:${base64.encode(localKeyBytes)}`;
+        if (localKeyBytes.length !== 1312) {
+            throw new Error(`NDKNostrRpc requires an ML-DSA-44 signer, got key length ${localKeyBytes.length}`);
+        }
+        event.key = `ml-dsa-44:${base64.encode(localKeyBytes)}`;
 
         event.content = await this.signer.encrypt(remoteUser, event.content, this.encryptionType);
         await event.sign(this.signer);

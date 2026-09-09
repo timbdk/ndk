@@ -1,3 +1,5 @@
+import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
+import { base64 } from "@scure/base";
 import type { NostrEvent } from "../../events/index.js";
 import type { NDK } from "../../ndk/index.js";
 import type { NDKEncryptionScheme } from "../../types.js";
@@ -45,6 +47,14 @@ export class NDKTransportCredential implements NDKSigner {
 
     get ecdhSigner(): NDKPrivateKeySigner {
         return this._ecdhSigner;
+    }
+
+    get encPublicKey(): string {
+        return this._ecdhSigner.pubkey;
+    }
+
+    get encPublicKeyBase64(): string {
+        return base64.encode(hexToBytes(this._ecdhSigner.pubkey));
     }
 
     get pubkey(): string {
