@@ -21,10 +21,6 @@
         "default": "./dist/index.js"
       }
     },
-    "./workers/sig-verification": {
-      "import": "./dist/workers/sig-verification.mjs",
-      "require": "./dist/workers/sig-verification.js"
-    },
     "./test": {
       "import": {
         "types": "./dist/test/index.d.ts",
@@ -43,7 +39,7 @@
   ],
   "scripts": {
     "dev": "bun run build --watch",
-    "build": "tsup src/index.ts --format cjs,esm --dts && tsup src/workers/sig-verification.ts --format cjs,esm --dts -d dist/workers && tsup test/index.ts --format cjs,esm --dts -d dist/test",
+    "build": "tsup src/index.ts --format cjs,esm --dts && tsup test/index.ts --format cjs,esm --dts -d dist/test",
     "build:core:esm": "tsup src/index.ts --format esm --dts",
     "clean": "rm -rf dist docs",
     "prepare": "bun run build",
