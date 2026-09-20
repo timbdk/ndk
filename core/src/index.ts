@@ -61,6 +61,7 @@ export { deserialize, type NDKEventSerialized, serialize, serializeEvent } from 
 export * from "./events/wrap.js";
 export type { NDKConstructorParams, NDKWalletInterface } from "./ndk/index.js";
 export { NDK as default } from "./ndk/index.js";
+export * from "./constants.js";
 // Re-export nip19 utilities for lightweight data conversion
 export * as nip19 from "./nip19/index.js";
 // Re-export nip49 utilities for private key encryption

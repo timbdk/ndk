@@ -3,6 +3,7 @@ import { EventEmitter } from "tseep";
 
 import type { NDKEvent, NDKTag } from "../events/index.js";
 import type { NDK } from "../ndk/index.js";
+import { DEFAULT_PUBLISH_TIMEOUT_MS } from "../constants.js";
 import type { NDKFilter, NDKSubscription } from "../subscription/index.js";
 import type { NDKUser } from "../user/index.js";
 import { normalizeRelayUrl } from "../utils/normalize-url.js";
@@ -110,6 +111,7 @@ export class NDKRelay extends EventEmitter<{
     public subs: NDKRelaySubscriptionManager;
     private publisher: NDKRelayPublisher;
     public authPolicy?: NDKAuthPolicy;
+    public ndk?: NDK;
 
     /**
      * Protocol handlers for custom relay message types (e.g., NEG-OPEN, NEG-MSG).
@@ -179,6 +181,7 @@ export class NDKRelay extends EventEmitter<{
 
     public constructor(url: WebSocket["url"], authPolicy: NDKAuthPolicy | undefined, ndk: NDK) {
         super();
+        this.ndk = ndk;
         this.url = normalizeRelayUrl(url);
         this.scores = new Map<NDKUser, NDKRelayScore>();
         this.debug = debug(`ndk:relay:${url}`);
@@ -260,8 +263,8 @@ export class NDKRelay extends EventEmitter<{
      * @param timeoutMs The timeout for the publish operation in milliseconds
      * @returns A promise that resolves when the event has been published or rejects if the operation times out
      */
-    public async publish(event: NDKEvent, timeoutMs = 2500): Promise<boolean> {
-        return this.publisher.publish(event, timeoutMs);
+    public async publish(event: NDKEvent, timeoutMs?: number): Promise<boolean> {
+        return this.publisher.publish(event, timeoutMs ?? this.ndk?.defaultPublishTimeoutMs ?? event.ndk?.defaultPublishTimeoutMs ?? DEFAULT_PUBLISH_TIMEOUT_MS);
     }
 
     public referenceTags(): NDKTag[] {

@@ -96,10 +96,30 @@ export class NDKRelayConnectivity {
             }
         });
 
-        // Monitor WebSocket readyState every 5 seconds.
-        // Use >= CONNECTED to cover CONNECTED and AUTHENTICATED states:
-        // without this, a silent TCP drop after successful auth goes undetected
-        // until the next keepalive probe.
+        // Detect system sleep by monitoring time gaps in browser environments only.
+        // Server processes (Node.js/Bun containers) do not sleep, but under high CPU load
+        // event loop delays >5s can cause false sleep detections that trigger probe storms.
+        if (typeof window !== "undefined" && typeof document !== "undefined") {
+            this.sleepDetector = setInterval(() => {
+                const now = Date.now();
+                const elapsed = now - this.lastSleepCheck;
+
+                // If more than 15 seconds elapsed (should be 10), system was likely suspended
+                if (elapsed > 15000) {
+                    this.debug(`Detected possible sleep/wake (${elapsed}ms gap)`);
+                    this.handlePossibleWake();
+                }
+
+                this.lastSleepCheck = now;
+            }, 10000);
+        }
+    }
+
+    /**
+     * Starts monitoring WebSocket readyState every 5 seconds while connected.
+     */
+    private startWsStateMonitor(): void {
+        if (this.wsStateMonitor) return;
         this.wsStateMonitor = setInterval(() => {
             if (this._status >= NDKRelayStatus.CONNECTED) {
                 if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
@@ -108,20 +128,16 @@ export class NDKRelayConnectivity {
                 }
             }
         }, 5000);
+    }
 
-        // Detect system sleep by monitoring time gaps
-        this.sleepDetector = setInterval(() => {
-            const now = Date.now();
-            const elapsed = now - this.lastSleepCheck;
-
-            // If more than 15 seconds elapsed (should be 10), system was likely suspended
-            if (elapsed > 15000) {
-                this.debug(`Detected possible sleep/wake (${elapsed}ms gap)`);
-                this.handlePossibleWake();
-            }
-
-            this.lastSleepCheck = now;
-        }, 10000);
+    /**
+     * Stops WebSocket readyState monitoring.
+     */
+    private stopWsStateMonitor(): void {
+        if (this.wsStateMonitor) {
+            clearInterval(this.wsStateMonitor);
+            this.wsStateMonitor = undefined;
+        }
     }
 
     /**
@@ -129,6 +145,7 @@ export class NDKRelayConnectivity {
      */
     private handleStaleConnection(): void {
         this.wasIdle = true; // Mark as idle to reset backoff
+        this.stopWsStateMonitor();
 
         // Stop keepalive
         this.keepalive?.stop();
@@ -145,6 +162,9 @@ export class NDKRelayConnectivity {
 
         this._status = NDKRelayStatus.DISCONNECTED;
         this.ndkRelay.emit("disconnect");
+
+        // Clear any pending publish promises so they reject immediately instead of hanging
+        this.clearPendingPublishes(new Error(`Relay ${this.ndkRelay.url} connection is stale`));
 
         // Trigger reconnection for stale connections
         this.handleReconnection();
@@ -196,6 +216,15 @@ export class NDKRelayConnectivity {
             clearTimeout(this.reconnectTimeout);
             this.reconnectTimeout = undefined;
         }
+        if (this.ws && this.ws.readyState !== WebSocket.OPEN) {
+            try {
+                this.ws.close();
+            } catch (e) {
+                // Ignore errors when closing stale connection
+            }
+            this.ws = undefined;
+            this._status = NDKRelayStatus.DISCONNECTED;
+        }
     }
 
     /**
@@ -214,7 +243,7 @@ export class NDKRelayConnectivity {
      */
     async connect(timeoutMs?: number, reconnect = true): Promise<void> {
         // Check if WebSocket exists but is not open (stale connection)
-        if (this.ws && this.ws.readyState !== WebSocket.OPEN && this.ws.readyState !== WebSocket.CONNECTING) {
+        if (this.ws && this.ws.readyState !== WebSocket.OPEN) {
             this.debug("Cleaning up stale WebSocket connection");
             try {
                 this.ws.close();
@@ -246,7 +275,7 @@ export class NDKRelayConnectivity {
             this.connectTimeout = undefined;
         }
 
-        timeoutMs ??= this.timeoutMs;
+        timeoutMs ??= this.timeoutMs ?? 10000;
         if (!this.timeoutMs && timeoutMs) this.timeoutMs = timeoutMs;
 
         if (this.timeoutMs) this.connectTimeout = setTimeout(() => this.onConnectionError(reconnect), this.timeoutMs);
@@ -281,10 +310,7 @@ export class NDKRelayConnectivity {
 
         // Clean up monitoring
         this.keepalive?.stop();
-        if (this.wsStateMonitor) {
-            clearInterval(this.wsStateMonitor);
-            this.wsStateMonitor = undefined;
-        }
+        this.stopWsStateMonitor();
         if (this.sleepDetector) {
             clearInterval(this.sleepDetector);
             this.sleepDetector = undefined;
@@ -334,6 +360,7 @@ export class NDKRelayConnectivity {
 
         // Start keepalive monitoring
         this.keepalive?.start();
+        this.startWsStateMonitor();
         this.wasIdle = false;
 
         this.ndkRelay.emit("connect");
@@ -351,8 +378,9 @@ export class NDKRelayConnectivity {
         this.netDebug?.("disconnected", this.ndkRelay);
         this.updateConnectionStats.disconnected();
 
-        // Stop keepalive when disconnected
+        // Stop keepalive and ws state monitoring when disconnected
         this.keepalive?.stop();
+        this.stopWsStateMonitor();
 
         // Clear any pending publish/auth promises to prevent memory leaks
         this.clearPendingPublishes(new Error(`Relay ${this.ndkRelay.url} disconnected`));
@@ -636,6 +664,9 @@ export class NDKRelayConnectivity {
      * @returns {NDKRelayStatus} The current status of the NDK relay connection.
      */
     get status(): NDKRelayStatus {
+        if (this._status >= NDKRelayStatus.CONNECTED && (!this.ws || this.ws.readyState !== WebSocket.OPEN)) {
+            return NDKRelayStatus.DISCONNECTED;
+        }
         return this._status;
     }
 
@@ -644,7 +675,7 @@ export class NDKRelayConnectivity {
      * @returns {boolean} `true` if the relay connection is in the `CONNECTED` status, `false` otherwise.
      */
     public isAvailable(): boolean {
-        return this._status >= NDKRelayStatus.CONNECTED;
+        return this.status >= NDKRelayStatus.CONNECTED;
     }
 
     /**
@@ -855,6 +886,11 @@ export class NDKRelayConnectivity {
      * @throws {Error} If attempting to publish on a closed relay connection.
      */
     async publish(event: NostrEvent): Promise<string> {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+            this.handleStaleConnection();
+            throw new Error(`Cannot publish: WebSocket to ${this.ndkRelay.url} is not open (state: ${this.ws?.readyState})`);
+        }
+
         const ret = new Promise<string>((resolve, reject) => {
             const val = this.openEventPublishes.get(event.id!) ?? [];
             if (val.length > 0) {

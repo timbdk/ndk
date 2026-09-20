@@ -1,6 +1,7 @@
 import { EventEmitter } from "tseep";
 
 import type { NDK } from "../ndk/index.js";
+import { DEFAULT_PUBLISH_TIMEOUT_MS } from "../constants.js";
 import type { NDKRelay } from "../relay/index.js";
 import { calculateRelaySetFromEvent } from "../relay/sets/calculate.js";
 import type { NDKRelaySet } from "../relay/sets/index.js";
@@ -570,6 +571,7 @@ export class NDKEvent extends EventEmitter {
         requiredRelayCount?: number,
         opts?: ContentTaggingOptions,
     ): Promise<Set<NDKRelay>> {
+        if (!timeoutMs) timeoutMs = this.ndk?.defaultPublishTimeoutMs ?? DEFAULT_PUBLISH_TIMEOUT_MS;
         if (!requiredRelayCount) requiredRelayCount = 1;
         if (!this.sig) await this.sign(undefined, opts);
         if (!this.ndk) throw new Error("NDKEvent must be associated with an NDK instance to publish");

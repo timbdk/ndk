@@ -113,7 +113,7 @@ export class NDKNip46Backend {
         }
 
         this.debug = ndk.debug.extend("nip46:backend");
-        this.relayUrls = relayUrls ?? Array.from(ndk.pool.relays.keys());
+        this.relayUrls = relayUrls?.length ? relayUrls : Array.from(ndk.pool.relays.keys());
         this.rpc = new NDKNostrRpc(ndk, this.signer, this.debug, this.relayUrls);
         this.permitCallback = permitCallback;
     }
@@ -186,6 +186,13 @@ export class NDKNip46Backend {
     }
 
     protected async handleIncomingEvent(event: NDKEvent) {
+        // validate signature explicitly before decrypting
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        if (!event.verifySignature(false)) {
+            this.debug("invalid signature", event.rawEvent());
+            return;
+        }
+
         const parsed = await this.rpc.parseEvent(event);
         if (!parsed) {
             this.debug("could not parse or decrypt incoming event", event.rawEvent());
@@ -198,13 +205,6 @@ export class NDKNip46Backend {
         let errorHandled = false;
 
         this.debug("incoming event", { id, method, params });
-
-        // validate signature explicitly
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        if (!event.verifySignature(false)) {
-            this.debug("invalid signature", event.rawEvent());
-            return;
-        }
 
         const strategy = this.handlers[method];
         if (strategy) {

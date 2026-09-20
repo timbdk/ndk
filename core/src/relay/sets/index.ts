@@ -2,6 +2,7 @@ import type { NDKAggregatedCountResult, NDKCountOptions, NDKCountResult } from "
 import { NDKCountHll } from "../../count/index.js";
 import type { NDKEvent } from "../../events/index.js";
 import type { NDK } from "../../ndk/index.js";
+import { DEFAULT_PUBLISH_TIMEOUT_MS } from "../../constants.js";
 import type { NDKFilter } from "../../subscription/index.js";
 import { normalizeRelayUrl } from "../../utils/normalize-url.js";
 import { NDKRelay, NDKRelayStatus } from "../index.js";
@@ -155,6 +156,7 @@ export class NDKRelaySet {
      * ```
      */
     public async publish(event: NDKEvent, timeoutMs?: number, requiredRelayCount = 1): Promise<Set<NDKRelay>> {
+        if (!timeoutMs) timeoutMs = this.ndk?.defaultPublishTimeoutMs ?? event.ndk?.defaultPublishTimeoutMs ?? DEFAULT_PUBLISH_TIMEOUT_MS;
         // Set to track relays that successfully received the event.
         // This set is populated both by promise resolutions and by relay:published events
         // We use a Set data structure to ensure each relay is only counted once

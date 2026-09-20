@@ -27,6 +27,41 @@ export class NDKRelaySubscriptionManager {
         this.relay = relay;
         this.subscriptions = new Map();
         this.generalSubManager = generalSubManager;
+
+        this.relay.on("ready", () => {
+            this.restartSubscriptions();
+        });
+
+        this.relay.on("disconnect", () => {
+            this.onRelayDisconnect();
+        });
+    }
+
+    private onRelayDisconnect(): void {
+        for (const subs of this.subscriptions.values()) {
+            for (const sub of subs) {
+                if (sub.status === NDKRelaySubscriptionStatus.RUNNING) {
+                    sub.status = NDKRelaySubscriptionStatus.WAITING;
+                }
+            }
+        }
+    }
+
+    /**
+     * Re-executes active subscriptions when a relay connects or authenticates.
+     */
+    public restartSubscriptions(): void {
+        for (const subs of this.subscriptions.values()) {
+            for (const sub of subs) {
+                if (
+                    sub.items.size > 0 &&
+                    (sub.status === NDKRelaySubscriptionStatus.WAITING ||
+                        sub.status === NDKRelaySubscriptionStatus.RUNNING)
+                ) {
+                    sub.restart();
+                }
+            }
+        }
     }
 
     /**

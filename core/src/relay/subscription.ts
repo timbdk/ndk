@@ -206,6 +206,31 @@ export class NDKRelaySubscription {
         this.cleanup();
     }
 
+    public restart(): void {
+        if (this.items.size === 0 || this.status === NDKRelaySubscriptionStatus.CLOSED) {
+            return;
+        }
+
+        this.debug("Restarting subscription on reconnected relay", {
+            subId: this.subId,
+            status: this.status,
+            itemsSize: this.items.size,
+        });
+
+        const oldSubId = this._subId;
+        this.relay.off("ready", this.executeOnRelayReady);
+        this.relay.off("authed", this.reExecuteAfterAuth);
+
+        if (oldSubId && (this.status === NDKRelaySubscriptionStatus.RUNNING || this.eosed)) {
+            this.relay.close(oldSubId);
+        }
+
+        this.eosed = false;
+        this._subId = undefined;
+        this.status = NDKRelaySubscriptionStatus.PENDING;
+        this.execute();
+    }
+
     public cleanup() {
         // remove delayed execution
         if (this.executionTimer) clearTimeout(this.executionTimer as NodeJS.Timeout);

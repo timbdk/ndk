@@ -45,7 +45,7 @@ export class NDKNostrRpc extends EventEmitter {
         this.signer = signer;
 
         // if we have relays, we create a separate pool for it
-        if (relayUrls) {
+        if (relayUrls?.length) {
             this.pool = new NDKPool(relayUrls, ndk, {
                 debug: debug.extend("rpc-pool"),
                 name: "Nostr RPC",
@@ -68,6 +68,10 @@ export class NDKNostrRpc extends EventEmitter {
      * @param relayUrls
      */
     public updateRelays(relayUrls: string[]): void {
+        if (!relayUrls.length) {
+            this.debug("updateRelays called with empty relay list, ignoring");
+            return;
+        }
         if (!this.pool) {
             this.pool = new NDKPool(relayUrls, this.ndk, {
                 debug: this.debug.extend("rpc-pool"),
@@ -103,6 +107,9 @@ export class NDKNostrRpc extends EventEmitter {
                 onEvent: async (event: NDKEvent) => {
                     try {
                         const parsedEvent = await this.parseEvent(event);
+                        if (!parsedEvent) {
+                            return;
+                        }
                         if ((parsedEvent as NDKRpcRequest).method) {
                             this.emit("request", parsedEvent);
                         } else {
@@ -121,7 +128,7 @@ export class NDKNostrRpc extends EventEmitter {
         });
     }
 
-    public async parseEvent(event: NDKEvent): Promise<NDKRpcRequest | NDKRpcResponse> {
+    public async parseEvent(event: NDKEvent): Promise<NDKRpcRequest | NDKRpcResponse | null> {
         // support both nip04 and nip44 encryption
         if (this.encryptionType === "nip44" && event.content.includes("?iv=")) {
             this.encryptionType = "nip04";
@@ -199,11 +206,17 @@ export class NDKNostrRpc extends EventEmitter {
                 decryptedContent = await this.signer.decrypt(remoteUser, event.content, otherEncryptionType);
             } catch (e) {
                 this.debug("error decrypting event", e, event.rawEvent());
-                return null as unknown as NDKRpcRequest | NDKRpcResponse;
+                return null;
             }
         }
 
-        const parsedContent = JSON.parse(decryptedContent);
+        let parsedContent: any;
+        try {
+            parsedContent = JSON.parse(decryptedContent);
+        } catch (e) {
+            this.debug("error parsing decrypted content as JSON", e, event.rawEvent());
+            return null;
+        }
         const { id, method, params, result, error } = parsedContent;
 
         if (method) {

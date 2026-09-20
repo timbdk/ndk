@@ -1,6 +1,7 @@
 import type { NDKEvent } from "../events";
 import type { NDKRelay } from ".";
 import { NDKRelayStatus } from ".";
+import { DEFAULT_PUBLISH_TIMEOUT_MS } from "../constants.js";
 
 export class NDKRelayPublisher {
     private ndkRelay: NDKRelay;
@@ -21,7 +22,7 @@ export class NDKRelayPublisher {
      * @param timeoutMs  The timeout for the publish operation in milliseconds
      * @returns A promise that resolves when the event has been published or rejects if the operation times out
      */
-    public async publish(event: NDKEvent, timeoutMs = 2500): Promise<boolean> {
+    public async publish(event: NDKEvent, timeoutMs = DEFAULT_PUBLISH_TIMEOUT_MS): Promise<boolean> {
         let timeout: NodeJS.Timeout | number | undefined;
 
         const publishConnected = () => {

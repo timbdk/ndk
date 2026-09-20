@@ -4,6 +4,7 @@ import { nip19 } from "nostr-tools";
 import { EventEmitter } from "tseep";
 import { AIGuardrails } from "../ai-guardrails/index.js";
 import type { NDKCacheAdapter } from "../cache/index.js";
+import { DEFAULT_PUBLISH_TIMEOUT_MS } from "../constants.js";
 import dedupEvent from "../events/dedup.js";
 import { NDKEvent } from "../events/index.js";
 import { signatureVerificationInit } from "../events/signature.js";
@@ -254,6 +255,12 @@ export interface NDKConstructorParams {
      * ```
      */
     futureTimestampGrace?: number;
+
+    /**
+     * Default timeout for publish operations in milliseconds.
+     * Defaults to 20000 (20 seconds).
+     */
+    defaultPublishTimeoutMs?: number;
 }
 
 export interface GetUserParams extends NDKUserParams {
@@ -357,6 +364,7 @@ export class NDK extends EventEmitter<{
     public subManager: NDKSubscriptionManager;
     public aiGuardrails: AIGuardrails;
     public futureTimestampGrace?: number;
+    public defaultPublishTimeoutMs = DEFAULT_PUBLISH_TIMEOUT_MS;
 
     /**
      * Private storage for the signature verification function
@@ -441,6 +449,7 @@ export class NDK extends EventEmitter<{
         });
 
         this.autoConnectUserRelays = opts.autoConnectUserRelays ?? true;
+        this.defaultPublishTimeoutMs = opts.defaultPublishTimeoutMs ?? DEFAULT_PUBLISH_TIMEOUT_MS;
 
         this.clientName = opts.clientName;
         this.clientNip89 = opts.clientNip89;
