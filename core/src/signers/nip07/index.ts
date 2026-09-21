@@ -182,6 +182,11 @@ export class NDKNip07Signer implements NDKSigner {
 
         const { scheme, method, counterpartyHexpubkey, value, resolve, reject } = currentItem;
 
+        if (scheme === "kem") {
+            reject(new Error("KEM encryption is not supported by NIP-07"));
+            return;
+        }
+
         this.debug("Processing encryption queue item", {
             method,
             counterpartyHexpubkey,
@@ -189,7 +194,7 @@ export class NDKNip07Signer implements NDKSigner {
         });
 
         try {
-            const result = await window.nostr?.[scheme]?.[method](counterpartyHexpubkey, value);
+            const result = await (window.nostr as any)?.[scheme]?.[method](counterpartyHexpubkey, value);
             if (!result) throw new Error("Failed to encrypt/decrypt");
             resolve(result);
         } catch (error: unknown) {

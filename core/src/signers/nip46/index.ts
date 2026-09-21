@@ -464,14 +464,38 @@ export class NDKNip46Signer extends EventEmitter implements NDKSigner {
 
     public async encryptionEnabled(scheme?: NDKEncryptionScheme): Promise<NDKEncryptionScheme[]> {
         if (scheme) return [scheme];
-        return Promise.resolve(["nip04", "nip44"]);
+        return Promise.resolve(["nip04", "nip44", "kem"]);
     }
 
     public async encrypt(recipient: NDKUser, value: string, scheme: NDKEncryptionScheme = "nip04"): Promise<string> {
+        if (scheme === "kem") {
+            throw new Error("KEM encryption is browser-local; no encrypt RPC exists");
+        }
         return this.encryption(recipient, value, scheme, "encrypt");
     }
 
     public async decrypt(sender: NDKUser, value: string, scheme: NDKEncryptionScheme = "nip04"): Promise<string> {
+        if (scheme === "kem") {
+            const promise = new Promise<string>((resolve, reject) => {
+                if (!this.bunkerPubkey) throw new Error("Bunker pubkey not set");
+
+                this.rpc.sendRequest(
+                    this.bunkerPubkey,
+                    "kem_decrypt",
+                    [value],
+                    24133,
+                    (response: NDKRpcResponse) => {
+                        if (!response.error) {
+                            resolve(response.result);
+                        } else {
+                            reject(response.error);
+                        }
+                    },
+                );
+            });
+
+            return this.withTimeout(promise, "kem_decrypt");
+        }
         return this.encryption(sender, value, scheme, "decrypt");
     }
 

@@ -1,4 +1,4 @@
-export type NDKEncryptionScheme = "nip04" | "nip44";
+export type NDKEncryptionScheme = "nip04" | "nip44" | "kem";
 
 import type { NDKEventId } from "./events/index.js";
 import type { NDKNutzap } from "./index.js";
