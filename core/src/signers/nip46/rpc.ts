@@ -4,13 +4,13 @@ import { base64 } from "@scure/base";
 import { EventEmitter } from "tseep";
 import type { NostrEvent } from "../../events";
 import { NDKEvent } from "../../events";
-import { NDKKind } from "../../events/kinds";
 import type { NDK } from "../../ndk";
 import { NDKRelayAuthPolicies } from "../../relay/auth-policies";
 import { NDKPool } from "../../relay/pool";
 import { NDKRelaySet } from "../../relay/sets";
 import { type NDKFilter, type NDKSubscription, NDKSubscriptionCacheUsage } from "../../subscription";
 import type { NDKSigner } from "..";
+import { kemEncrypt } from "../kem/index.js";
 
 export interface NDKRpcRequest {
     id: string;
@@ -27,22 +27,47 @@ export interface NDKRpcResponse {
     event: NDKEvent;
 }
 
+export interface NDKNostrRpcOptions {
+    envelopeMode?: "kem" | "classical";
+    requestPeerKemKey?: string;
+    resolvePeerKemKey?: (recipientUid: string) => Promise<string | undefined> | string | undefined;
+    responseCapable?: boolean;
+}
+
 export class NDKNostrRpc extends EventEmitter {
     private ndk: NDK;
     private signer: NDKSigner;
     private relaySet: NDKRelaySet | undefined;
     private debug: debug.Debugger;
-    public encryptionType: "nip04" | "nip44" = "nip44";
+    public envelopeMode: "kem" | "classical";
+    public requestPeerKemKey?: string;
+    public resolvePeerKemKey?: (recipientUid: string) => Promise<string | undefined> | string | undefined;
     public bunkerPubkey?: string;
     public adminEcdhPubkeys?: Map<string, string>;
     public peerEcdhPubkeys: Map<string, string> = new Map();
     public resolvePeerEcdhPubkey?: (authorUid: string) => Promise<string | undefined> | string | undefined;
     private pool: NDKPool | undefined;
 
-    public constructor(ndk: NDK, signer: NDKSigner, debug: debug.Debugger, relayUrls?: string[]) {
+    public constructor(
+        ndk: NDK,
+        signer: NDKSigner,
+        debug: debug.Debugger,
+        relayUrls?: string[],
+        options?: NDKNostrRpcOptions,
+    ) {
         super();
         this.ndk = ndk;
         this.signer = signer;
+        this.envelopeMode = options?.envelopeMode ?? "classical";
+        this.requestPeerKemKey = options?.requestPeerKemKey;
+        this.resolvePeerKemKey = options?.resolvePeerKemKey;
+
+        if (this.envelopeMode === "kem") {
+            const isResponseCapable = options?.responseCapable === true;
+            if (isResponseCapable && !this.resolvePeerKemKey) {
+                throw new Error("Response-capable KEM RPC instance requires resolvePeerKemKey");
+            }
+        }
 
         // if we have relays, we create a separate pool for it
         if (relayUrls?.length) {
@@ -60,7 +85,7 @@ export class NDKNostrRpc extends EventEmitter {
             }
         }
 
-        this.debug = debug.extend("rpc");
+        this.debug = debug?.extend ? debug.extend("rpc") : ndk.debug.extend("rpc");
     }
 
     /**
@@ -129,81 +154,89 @@ export class NDKNostrRpc extends EventEmitter {
     }
 
     public async parseEvent(event: NDKEvent): Promise<NDKRpcRequest | NDKRpcResponse | null> {
-        // support both nip04 and nip44 encryption
-        if (this.encryptionType === "nip44" && event.content.includes("?iv=")) {
-            this.encryptionType = "nip04";
-        } else if (this.encryptionType === "nip04" && !event.content.includes("?iv=")) {
-            this.encryptionType = "nip44";
-        }
-
         const authorUid = (event as any).uid ?? event.pubkey;
-        let remotePubkeyHex = authorUid;
-        let isSecp256k1 = false;
-        if (event.key && event.key.includes(":")) {
-            try {
-                const [alg, b64] = event.key.split(":");
-                if (alg === "secp256k1-schnorr" || alg === "secp256k1" || alg === "secp256k1-nip44") {
-                    remotePubkeyHex = bytesToHex(base64.decode(b64));
-                    isSecp256k1 = true;
-                }
-            } catch {
-                // fallback
+        let decryptedContent: string;
+
+        if (this.envelopeMode === "kem") {
+            if (!event.content || !event.content.startsWith("kem1:")) {
+                this.debug("rejecting non-kem1 event in kem envelopeMode", event.rawEvent());
+                return null;
             }
-        }
-        if (!isSecp256k1) {
-            const encTag = event.tags?.find((t: string[]) => t[0] === "enc");
-            if (encTag && encTag[1]) {
+            try {
+                if (typeof (this.signer as any)?.kemDecaps === "function") {
+                    decryptedContent = (this.signer as any).kemDecaps(event.content);
+                } else if (typeof (this.signer as any)?.kemDecrypt === "function") {
+                    decryptedContent = await (this.signer as any).kemDecrypt(event.content);
+                } else {
+                    decryptedContent = await this.signer.decrypt(undefined as any, event.content, "kem");
+                }
+            } catch (e) {
+                this.debug("error decapsulating KEM event", e, event.rawEvent());
+                return null;
+            }
+        } else {
+            let remotePubkeyHex = authorUid;
+            let isSecp256k1 = false;
+            if (event.key && event.key.includes(":")) {
                 try {
-                    const decoded = base64.decode(encTag[1]);
-                    if (decoded.length === 32) {
-                        const encHex = bytesToHex(decoded);
-                        this.peerEcdhPubkeys.set(authorUid, encHex);
-                        remotePubkeyHex = encHex;
+                    const [alg, b64] = event.key.split(":");
+                    if (alg === "secp256k1-schnorr" || alg === "secp256k1" || alg === "secp256k1-nip44") {
+                        remotePubkeyHex = bytesToHex(base64.decode(b64));
                         isSecp256k1 = true;
                     }
                 } catch {
                     // fallback
                 }
             }
-        }
-        if (!isSecp256k1 && this.resolvePeerEcdhPubkey) {
-            try {
-                const resolved = await this.resolvePeerEcdhPubkey(authorUid);
-                if (resolved) {
-                    this.peerEcdhPubkeys.set(authorUid, resolved);
-                    remotePubkeyHex = resolved;
-                    isSecp256k1 = true;
+            if (!isSecp256k1) {
+                const encTag = event.tags?.find((t: string[]) => t[0] === "enc");
+                if (encTag && encTag[1]) {
+                    try {
+                        const decoded = base64.decode(encTag[1]);
+                        if (decoded.length === 32) {
+                            const encHex = bytesToHex(decoded);
+                            this.peerEcdhPubkeys.set(authorUid, encHex);
+                            remotePubkeyHex = encHex;
+                            isSecp256k1 = true;
+                        }
+                    } catch {
+                        // fallback
+                    }
                 }
-            } catch {
-                // fallback
             }
-        }
-        if (!isSecp256k1 && this.peerEcdhPubkeys.has(authorUid)) {
-            remotePubkeyHex = this.peerEcdhPubkeys.get(authorUid)!;
-            isSecp256k1 = true;
-        }
-        if (!isSecp256k1 && this.adminEcdhPubkeys) {
-            const mappedEcdh = this.adminEcdhPubkeys.get(authorUid);
-            if (mappedEcdh) {
-                this.peerEcdhPubkeys.set(authorUid, mappedEcdh);
-                remotePubkeyHex = mappedEcdh;
+            if (!isSecp256k1 && this.resolvePeerEcdhPubkey) {
+                try {
+                    const resolved = await this.resolvePeerEcdhPubkey(authorUid);
+                    if (resolved) {
+                        this.peerEcdhPubkeys.set(authorUid, resolved);
+                        remotePubkeyHex = resolved;
+                        isSecp256k1 = true;
+                    }
+                } catch {
+                    // fallback
+                }
+            }
+            if (!isSecp256k1 && this.peerEcdhPubkeys.has(authorUid)) {
+                remotePubkeyHex = this.peerEcdhPubkeys.get(authorUid)!;
                 isSecp256k1 = true;
             }
-        }
-        if ((!isSecp256k1 || remotePubkeyHex.length !== 64) && this.bunkerPubkey) {
-            remotePubkeyHex = this.bunkerPubkey;
-        }
+            if (!isSecp256k1 && this.adminEcdhPubkeys) {
+                const mappedEcdh = this.adminEcdhPubkeys.get(authorUid);
+                if (mappedEcdh) {
+                    this.peerEcdhPubkeys.set(authorUid, mappedEcdh);
+                    remotePubkeyHex = mappedEcdh;
+                    isSecp256k1 = true;
+                }
+            }
+            if ((!isSecp256k1 || remotePubkeyHex.length !== 64) && this.bunkerPubkey) {
+                remotePubkeyHex = this.bunkerPubkey;
+            }
 
-        const remoteUser = this.ndk.getUser({ pubkey: remotePubkeyHex });
-        remoteUser.ndk = this.ndk;
-        let decryptedContent: string;
+            const remoteUser = this.ndk.getUser({ pubkey: remotePubkeyHex });
+            remoteUser.ndk = this.ndk;
 
-        try {
-            decryptedContent = await this.signer.decrypt(remoteUser, event.content, this.encryptionType);
-        } catch (_e) {
             try {
-                const otherEncryptionType = this.encryptionType === "nip04" ? "nip44" : "nip04";
-                decryptedContent = await this.signer.decrypt(remoteUser, event.content, otherEncryptionType);
+                decryptedContent = await this.signer.decrypt(remoteUser, event.content, "nip44");
             } catch (e) {
                 this.debug("error decrypting event", e, event.rawEvent());
                 return null;
@@ -232,6 +265,7 @@ export class NDKNostrRpc extends EventEmitter {
      * @param result
      * @param kind
      * @param error
+     * @param extraTags
      */
     public async sendResponse(
         id: string,
@@ -249,36 +283,8 @@ export class NDKNostrRpc extends EventEmitter {
         const localUser = await this.signer.user();
         const remoteKeyBytes = hexToBytes(remotePubkey);
         const remoteUid = remoteKeyBytes.length === 32 ? remotePubkey : bytesToHex(sha256(remoteKeyBytes));
-
-        let encTargetPubkey = remotePubkey;
-        if (this.resolvePeerEcdhPubkey) {
-            let resolved = await this.resolvePeerEcdhPubkey(remotePubkey);
-            if (!resolved && remoteUid !== remotePubkey) {
-                resolved = await this.resolvePeerEcdhPubkey(remoteUid);
-            }
-            if (resolved) {
-                encTargetPubkey = resolved;
-            }
-        }
-        if (encTargetPubkey === remotePubkey && this.peerEcdhPubkeys.has(remotePubkey)) {
-            encTargetPubkey = this.peerEcdhPubkeys.get(remotePubkey)!;
-        } else if (encTargetPubkey === remotePubkey && this.peerEcdhPubkeys.has(remoteUid)) {
-            encTargetPubkey = this.peerEcdhPubkeys.get(remoteUid)!;
-        }
-        if (encTargetPubkey === remotePubkey && this.adminEcdhPubkeys?.has(remotePubkey)) {
-            encTargetPubkey = this.adminEcdhPubkeys.get(remotePubkey)!;
-        } else if (encTargetPubkey === remotePubkey && this.adminEcdhPubkeys?.has(remoteUid)) {
-            encTargetPubkey = this.adminEcdhPubkeys.get(remoteUid)!;
-        }
-
-        if (encTargetPubkey === remotePubkey && (remotePubkey.length === 2624 || remoteKeyBytes.length === 32)) {
-            throw new Error(
-                `Cannot send NIP-46 response to ${remotePubkey}: no ECDH encryption public key resolved for peer`
-            );
-        }
-
-        const remoteUser = this.ndk.getUser({ pubkey: encTargetPubkey });
         const targetP = remotePubkey.length === 2624 ? remoteUid : remotePubkey;
+
         const tags: string[][] = [
             ["p", targetP],
             ["policy", "allow", "user", targetP],
@@ -295,18 +301,16 @@ export class NDKNostrRpc extends EventEmitter {
                 }
             }
         }
-        const encPubkeyBase64 = (this.signer as any)?.encPublicKeyBase64;
-        if (encPubkeyBase64) {
-            tags.push(["enc", encPubkeyBase64]);
-        }
         if (extraTags) {
             tags.push(...extraTags);
         }
+
         const event = new NDKEvent(this.ndk, {
             kind,
             content: JSON.stringify(res),
             tags,
         } as NostrEvent);
+
         const localKeyBytes = hexToBytes(localUser.pubkey);
         event.uid = bytesToHex(sha256(localKeyBytes));
         if (localKeyBytes.length !== 1312) {
@@ -314,7 +318,60 @@ export class NDKNostrRpc extends EventEmitter {
         }
         event.key = `ml-dsa-44:${base64.encode(localKeyBytes)}`;
 
-        event.content = await this.signer.encrypt(remoteUser, event.content, this.encryptionType);
+        if (this.envelopeMode === "kem") {
+            if (!this.resolvePeerKemKey) {
+                throw new Error(
+                    `No recipient KEM public key available for response to ${remotePubkey}: resolvePeerKemKey is not configured`
+                );
+            }
+            let recipientKemKey = await this.resolvePeerKemKey(remotePubkey);
+            if (!recipientKemKey && remoteUid !== remotePubkey) {
+                recipientKemKey = await this.resolvePeerKemKey(remoteUid);
+            }
+            if (!recipientKemKey) {
+                this.debug?.(
+                    `No recipient KEM public key available for response to ${remotePubkey}: resolvePeerKemKey returned no key, skipping send`
+                );
+                return;
+            }
+            event.content = kemEncrypt(recipientKemKey, event.content);
+        } else {
+            let encTargetPubkey = remotePubkey;
+            if (this.resolvePeerEcdhPubkey) {
+                let resolved = await this.resolvePeerEcdhPubkey(remotePubkey);
+                if (!resolved && remoteUid !== remotePubkey) {
+                    resolved = await this.resolvePeerEcdhPubkey(remoteUid);
+                }
+                if (resolved) {
+                    encTargetPubkey = resolved;
+                }
+            }
+            if (encTargetPubkey === remotePubkey && this.peerEcdhPubkeys.has(remotePubkey)) {
+                encTargetPubkey = this.peerEcdhPubkeys.get(remotePubkey)!;
+            } else if (encTargetPubkey === remotePubkey && this.peerEcdhPubkeys.has(remoteUid)) {
+                encTargetPubkey = this.peerEcdhPubkeys.get(remoteUid)!;
+            }
+            if (encTargetPubkey === remotePubkey && this.adminEcdhPubkeys?.has(remotePubkey)) {
+                encTargetPubkey = this.adminEcdhPubkeys.get(remotePubkey)!;
+            } else if (encTargetPubkey === remotePubkey && this.adminEcdhPubkeys?.has(remoteUid)) {
+                encTargetPubkey = this.adminEcdhPubkeys.get(remoteUid)!;
+            }
+
+            if (encTargetPubkey === remotePubkey && (remotePubkey.length === 2624 || remoteKeyBytes.length === 32)) {
+                throw new Error(
+                    `Cannot send NIP-46 response to ${remotePubkey}: no ECDH encryption public key resolved for peer`
+                );
+            }
+
+            const encPubkeyBase64 = (this.signer as any)?.encPublicKeyBase64;
+            if (encPubkeyBase64) {
+                tags.push(["enc", encPubkeyBase64]);
+            }
+
+            const remoteUser = this.ndk.getUser({ pubkey: encTargetPubkey });
+            event.content = await this.signer.encrypt(remoteUser, event.content, "nip44");
+        }
+
         await event.sign(this.signer);
         await event.publish(this.relaySet);
     }
@@ -325,7 +382,7 @@ export class NDKNostrRpc extends EventEmitter {
      * @param method
      * @param params
      * @param kind
-     * @param id
+     * @param cb
      */
     public async sendRequest(
         remotePubkey: string,
@@ -336,7 +393,6 @@ export class NDKNostrRpc extends EventEmitter {
     ): Promise<NDKRpcResponse> {
         const id = Math.random().toString(36).substring(7);
         const localUser = await this.signer.user();
-        const remoteUser = this.ndk.getUser({ pubkey: remotePubkey });
         const remoteKeyBytes = hexToBytes(remotePubkey);
         const remoteUid = remoteKeyBytes.length === 32 ? remotePubkey : bytesToHex(sha256(remoteKeyBytes));
         const request = { id, method, params };
@@ -369,10 +425,6 @@ export class NDKNostrRpc extends EventEmitter {
             reqTags.push(["p", remoteUid]);
             reqTags.push(["policy", "allow", "user", remoteUid]);
         }
-        const encPubkeyBase64 = (this.signer as any)?.encPublicKeyBase64;
-        if (encPubkeyBase64) {
-            reqTags.push(["enc", encPubkeyBase64]);
-        }
 
         const event = new NDKEvent(this.ndk, {
             kind,
@@ -386,7 +438,20 @@ export class NDKNostrRpc extends EventEmitter {
         }
         event.key = `ml-dsa-44:${base64.encode(localKeyBytes)}`;
 
-        event.content = await this.signer.encrypt(remoteUser, event.content, this.encryptionType);
+        if (this.envelopeMode === "kem") {
+            if (!this.requestPeerKemKey) {
+                throw new Error("Cannot send KEM RPC request: requestPeerKemKey is not configured");
+            }
+            event.content = kemEncrypt(this.requestPeerKemKey, event.content);
+        } else {
+            const encPubkeyBase64 = (this.signer as any)?.encPublicKeyBase64;
+            if (encPubkeyBase64) {
+                reqTags.push(["enc", encPubkeyBase64]);
+            }
+            const remoteUser = this.ndk.getUser({ pubkey: remotePubkey });
+            event.content = await this.signer.encrypt(remoteUser, event.content, "nip44");
+        }
+
         await event.sign(this.signer);
         await event.publish(this.relaySet);
 

@@ -704,8 +704,11 @@ export class NDKSubscription extends EventEmitter<{
         const _d = this.debug.extend("pool-monitor");
 
         this.poolMonitor = (relay: NDKRelay) => {
-            // check if the pool monitor is already in the relayFilters
-            if (this.relayFilters?.has(relay.url)) return;
+            const existingFilters = this.relayFilters?.get(relay.url);
+            if (existingFilters) {
+                relay.subscribe(this, existingFilters);
+                return;
+            }
 
             const calc = calculateRelaySetsFromFilters(this.ndk, this.filters, this.pool, this.opts.relayGoalPerAuthor);
 

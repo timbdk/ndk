@@ -14,7 +14,7 @@ import { registerSigner } from "../registry.js";
 import { generateNostrConnectUri, type NostrConnectOptions, nostrConnectGenerateSecret } from "./nostrconnect.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { hexToBytes, bytesToHex } from "@noble/hashes/utils.js";
-import type { NDKRpcResponse } from "./rpc.js";
+import type { NDKRpcResponse, NDKNostrRpcOptions } from "./rpc.js";
 import { NDKNostrRpc } from "./rpc.js";
 
 /**
@@ -82,7 +82,7 @@ export class NDKNip46Signer extends EventEmitter implements NDKSigner {
      * An optional secret value provided to connect to the bunker
      */
     public secret?: string | null;
-    public localSigner: NDKPrivateKeySigner;
+    public localSigner: NDKPrivateKeySigner | NDKSigner;
     private nip05?: string;
     public rpc: NDKNostrRpc;
     private debug: debug.Debugger;
@@ -128,15 +128,17 @@ export class NDKNip46Signer extends EventEmitter implements NDKSigner {
     public constructor(
         ndk: NDK,
         userOrConnectionToken?: string | NDKUser | false,
-        localSigner?: NDKPrivateKeySigner | string,
+        localSigner?: NDKPrivateKeySigner | string | NDKSigner,
         relayUrls?: string[],
         nostrConnectOptions?: NostrConnectOptions,
+        rpcOptions?: NDKNostrRpcOptions,
     ) {
         super();
 
         this.ndk = ndk;
         this.debug = ndk.debug.extend("nip46:signer");
         this.relayUrls = relayUrls;
+        this.rpcOptions = rpcOptions;
 
         if (!localSigner) {
             this.localSigner = NDKPrivateKeySigner.generate();
@@ -169,8 +171,25 @@ export class NDKNip46Signer extends EventEmitter implements NDKSigner {
             this.nip05Init(userOrConnectionToken);
         }
 
-        this.rpc = new NDKNostrRpc(this.ndk, this.localSigner, this.debug, this.relayUrls);
+        this.rpc = new NDKNostrRpc(this.ndk, this.localSigner, this.debug, this.relayUrls, this.rpcOptions);
         if (this.bunkerPubkey) this.rpc.bunkerPubkey = this.bunkerPubkey;
+    }
+
+    private rpcOptions?: NDKNostrRpcOptions;
+
+    set requestPeerKemKey(key: string | undefined) {
+        if (this.rpc) {
+            this.rpc.requestPeerKemKey = key;
+        }
+        if (!this.rpcOptions) {
+            this.rpcOptions = { envelopeMode: "kem", requestPeerKemKey: key };
+        } else {
+            this.rpcOptions.requestPeerKemKey = key;
+        }
+    }
+
+    get requestPeerKemKey(): string | undefined {
+        return this.rpc?.requestPeerKemKey;
     }
 
     /**
@@ -353,7 +372,7 @@ export class NDKNip46Signer extends EventEmitter implements NDKSigner {
                 this._user = user;
                 this.userPubkey = user.pubkey;
                 this.relayUrls = user.nip46Urls;
-                this.rpc = new NDKNostrRpc(this.ndk, this.localSigner, this.debug, this.relayUrls);
+                this.rpc = new NDKNostrRpc(this.ndk, this.localSigner, this.debug, this.relayUrls, this.rpcOptions);
             }
         }
 
@@ -375,10 +394,12 @@ export class NDKNip46Signer extends EventEmitter implements NDKSigner {
 
             if (this.secret) connectParams.push(this.secret);
 
+            const kemPubkeyBase64 = (this.localSigner as any)?.kemPublicKeyBase64;
             const encPubkeyBase64 = (this.localSigner as any)?.encPublicKeyBase64;
-            if (encPubkeyBase64) {
+            const carriedPubkeyBase64 = kemPubkeyBase64 || encPubkeyBase64;
+            if (carriedPubkeyBase64) {
                 if (!this.secret) connectParams.push("");
-                connectParams.push(encPubkeyBase64);
+                connectParams.push(carriedPubkeyBase64);
             }
 
             if (!this.bunkerPubkey) throw new Error("Bunker pubkey not set");
@@ -602,7 +623,7 @@ export class NDKNip46Signer extends EventEmitter implements NDKSigner {
                 userPubkey: this.userPubkey,
                 relayUrls: this.relayUrls,
                 secret: this.secret,
-                localSignerPayload: this.localSigner.toPayload(),
+                localSignerPayload: (this.localSigner as any)?.toPayload ? (this.localSigner as any).toPayload() : undefined,
                 // Store nip05 if it was used for initialization, otherwise null
                 nip05: this.nip05 || null,
             },

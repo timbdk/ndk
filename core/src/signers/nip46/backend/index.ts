@@ -5,7 +5,7 @@ import type { NDK } from "../../../ndk/index.js";
 import type { NDKUser } from "../../../user/index.js";
 import type { NDKSigner } from "../../index.js";
 import { NDKPrivateKeySigner } from "../../private-key/index.js";
-import { NDKNostrRpc } from "../rpc.js";
+import { NDKNostrRpc, type NDKNostrRpcOptions } from "../rpc.js";
 import ConnectEventHandlingStrategy from "./connect.js";
 import GetPublicKeyHandlingStrategy from "./get-public-key.js";
 import Nip04DecryptHandlingStrategy from "./nip04-decrypt.js";
@@ -101,6 +101,7 @@ export class NDKNip46Backend {
         privateKeyOrSigner: string | NDKSigner,
         permitCallback: Nip46PermitCallback,
         relayUrls?: WebSocket["url"][],
+        rpcOptions?: NDKNostrRpcOptions,
     ) {
         this.ndk = ndk;
 
@@ -116,7 +117,7 @@ export class NDKNip46Backend {
 
         this.debug = ndk.debug.extend("nip46:backend");
         this.relayUrls = relayUrls?.length ? relayUrls : Array.from(ndk.pool.relays.keys());
-        this.rpc = new NDKNostrRpc(ndk, this.signer, this.debug, this.relayUrls);
+        this.rpc = new NDKNostrRpc(ndk, this.signer, this.debug, this.relayUrls, rpcOptions);
         this.permitCallback = permitCallback;
     }
 
