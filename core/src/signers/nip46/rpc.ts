@@ -135,11 +135,21 @@ export class NDKNostrRpc extends EventEmitter {
                         if (!parsedEvent) {
                             return;
                         }
-                        if ((parsedEvent as NDKRpcRequest).method) {
+                        if ("method" in parsedEvent) {
                             this.emit("request", parsedEvent);
                         } else {
-                            this.emit(`response-${parsedEvent.id}`, parsedEvent);
-                            this.emit("response", parsedEvent);
+                            const response = parsedEvent as NDKRpcResponse;
+                            if (response.error?.includes("KEM_STALE_KEY")) {
+                                this.emit("kem_stale_key", response);
+                                const listeners = (this as any).eventNames?.() || [];
+                                for (const name of listeners) {
+                                    if (typeof name === "string" && name.startsWith("response-")) {
+                                        this.emit(name, response);
+                                    }
+                                }
+                            }
+                            this.emit(`response-${response.id}`, response);
+                            this.emit("response", response);
                         }
                     } catch (e) {
                         this.debug("error parsing event", e, event.rawEvent());
@@ -172,6 +182,7 @@ export class NDKNostrRpc extends EventEmitter {
                 }
             } catch (e) {
                 this.debug("error decapsulating KEM event", e, event.rawEvent());
+                this.emit("decapsulation:failed", { event, error: e });
                 return null;
             }
         } else {

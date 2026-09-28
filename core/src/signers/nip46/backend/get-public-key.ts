@@ -7,6 +7,9 @@ export default class GetPublicKeyHandlingStrategy implements IEventHandlingStrat
         _remotePubkey: string,
         _params: string[],
     ): Promise<string | undefined> {
+        if ((backend as any).sessionBinding !== undefined || typeof (backend as any).resolveSession === "function") {
+            return (backend as any).sessionBinding?.identityPubkey ?? undefined;
+        }
         return backend.localUser?.pubkey;
     }
 }

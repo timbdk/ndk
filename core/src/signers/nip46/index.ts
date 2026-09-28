@@ -111,6 +111,12 @@ export class NDKNip46Signer extends EventEmitter implements NDKSigner {
     public timeout?: number;
 
     /**
+     * Stale key self-heal handler
+     */
+    public onStaleKey?: () => Promise<void>;
+    private healingPromise?: Promise<void>;
+
+    /**
      *
      * Don't instantiate this directly. Use the static methods instead.
      *
@@ -131,7 +137,8 @@ export class NDKNip46Signer extends EventEmitter implements NDKSigner {
         localSigner?: NDKPrivateKeySigner | string | NDKSigner,
         relayUrls?: string[],
         nostrConnectOptions?: NostrConnectOptions,
-        rpcOptions?: NDKNostrRpcOptions,
+        rpcOptions?: NDKNostrRpcOptions & { userUid?: string; onStaleKey?: () => Promise<void> },
+        userUid?: string,
     ) {
         super();
 
@@ -139,6 +146,9 @@ export class NDKNip46Signer extends EventEmitter implements NDKSigner {
         this.debug = ndk.debug.extend("nip46:signer");
         this.relayUrls = relayUrls;
         this.rpcOptions = rpcOptions;
+        if (rpcOptions?.onStaleKey) {
+            this.onStaleKey = rpcOptions.onStaleKey;
+        }
 
         if (!localSigner) {
             this.localSigner = NDKPrivateKeySigner.generate();
@@ -156,7 +166,8 @@ export class NDKNip46Signer extends EventEmitter implements NDKSigner {
         } else if (typeof userOrConnectionToken === "object") {
             const uid = (userOrConnectionToken as any).uid || userOrConnectionToken.pubkey;
             this.bunkerPubkey = uid;
-            this.userPubkey = uid;
+            const effectiveUserUid = userUid ?? rpcOptions?.userUid ?? uid;
+            this.userPubkey = effectiveUserUid;
             this._user = userOrConnectionToken;
         } else if (typeof userOrConnectionToken === "string" && userOrConnectionToken.startsWith("bunker://")) {
             this.bunkerFlowInit(userOrConnectionToken);
@@ -165,8 +176,9 @@ export class NDKNip46Signer extends EventEmitter implements NDKSigner {
                 ? bytesToHex(sha256(hexToBytes(userOrConnectionToken)))
                 : userOrConnectionToken;
             this.bunkerPubkey = uid;
-            this.userPubkey = userOrConnectionToken;
-            this._user = this.ndk.getUser({ pubkey: userOrConnectionToken });
+            const effectiveUserUid = userUid ?? rpcOptions?.userUid ?? userOrConnectionToken;
+            this.userPubkey = effectiveUserUid;
+            this._user = this.ndk.getUser({ pubkey: effectiveUserUid });
         } else if (typeof userOrConnectionToken === "string") {
             this.nip05Init(userOrConnectionToken);
         }
@@ -175,7 +187,7 @@ export class NDKNip46Signer extends EventEmitter implements NDKSigner {
         if (this.bunkerPubkey) this.rpc.bunkerPubkey = this.bunkerPubkey;
     }
 
-    private rpcOptions?: NDKNostrRpcOptions;
+    private rpcOptions?: NDKNostrRpcOptions & { userUid?: string; onStaleKey?: () => Promise<void> };
 
     set requestPeerKemKey(key: string | undefined) {
         if (this.rpc) {
@@ -281,6 +293,39 @@ export class NDKNip46Signer extends EventEmitter implements NDKSigner {
     }
 
     /**
+     * Wraps an RPC operation with automatic single-attempt self-healing on KEM_STALE_KEY.
+     */
+    public async executeWithSelfHeal<T>(operation: () => Promise<T>): Promise<T> {
+        let hasHealed = false;
+        while (true) {
+            try {
+                return await operation();
+            } catch (err: any) {
+                const errMsg = typeof err === "string" ? err : err?.message;
+                if (!hasHealed && errMsg?.includes("KEM_STALE_KEY") && this.onStaleKey) {
+                    hasHealed = true;
+                    if (this.healingPromise) {
+                        this.debug("KEM_STALE_KEY received while healing already in progress; awaiting in-flight heal and retrying");
+                        await this.healingPromise;
+                    } else {
+                        this.debug("KEM_STALE_KEY error received; running onStaleKey self-heal and retrying once");
+                        this.healingPromise = (async () => {
+                            try {
+                                await this.onStaleKey!();
+                            } finally {
+                                this.healingPromise = undefined;
+                            }
+                        })();
+                        await this.healingPromise;
+                    }
+                    continue;
+                }
+                throw err;
+            }
+        }
+    }
+
+    /**
      * We start listening for events from the bunker
      */
     private async startListening() {
@@ -358,67 +403,69 @@ export class NDKNip46Signer extends EventEmitter implements NDKSigner {
     }
 
     public async blockUntilReady(): Promise<NDKUser> {
-        // Ensure bunkerPubkey is set before any logic
-        if (!this.bunkerPubkey && !this.nostrConnectSecret && !this.nip05) {
-            throw new Error("Bunker pubkey not set");
-        }
-
-        if (this.nostrConnectSecret) return this.blockUntilReadyNostrConnect();
-
-        if (this.nip05 && !this.userPubkey) {
-            const user = await NDKUser.fromNip05(this.nip05, this.ndk);
-
-            if (user) {
-                this._user = user;
-                this.userPubkey = user.pubkey;
-                this.relayUrls = user.nip46Urls;
-                this.rpc = new NDKNostrRpc(this.ndk, this.localSigner, this.debug, this.relayUrls, this.rpcOptions);
-            }
-        }
-
-        if (!this.bunkerPubkey && this.userPubkey) {
-            this.bunkerPubkey = this.userPubkey;
-        } else if (!this.bunkerPubkey) {
-            throw new Error("Bunker pubkey not set");
-        }
-        this.rpc.bunkerPubkey = this.bunkerPubkey;
-
-        await this.startListening();
-
-        this.rpc.on("authUrl", (...props) => {
-            this.emit("authUrl", ...props);
-        });
-
-        const promise = new Promise<NDKUser>((resolve, reject) => {
-            const connectParams = [this.userPubkey ?? ""];
-
-            if (this.secret) connectParams.push(this.secret);
-
-            const kemPubkeyBase64 = (this.localSigner as any)?.kemPublicKeyBase64;
-            const encPubkeyBase64 = (this.localSigner as any)?.encPublicKeyBase64;
-            const carriedPubkeyBase64 = kemPubkeyBase64 || encPubkeyBase64;
-            if (carriedPubkeyBase64) {
-                if (!this.secret) connectParams.push("");
-                connectParams.push(carriedPubkeyBase64);
+        return this.executeWithSelfHeal(async () => {
+            // Ensure bunkerPubkey is set before any logic
+            if (!this.bunkerPubkey && !this.nostrConnectSecret && !this.nip05) {
+                throw new Error("Bunker pubkey not set");
             }
 
-            if (!this.bunkerPubkey) throw new Error("Bunker pubkey not set");
+            if (this.nostrConnectSecret) return this.blockUntilReadyNostrConnect();
 
-            this.rpc.sendRequest(this.bunkerPubkey, "connect", connectParams, 24133, (response: NDKRpcResponse) => {
-                if (response.result === "ack") {
-                    this.getPublicKey().then(async (pubkey) => {
-                        this.userPubkey = pubkey;
-                        this._user = this.ndk.getUser({ pubkey });
-                        await this.switchRelays();
-                        resolve(this._user);
-                    }).catch(reject);
-                } else {
-                    reject(response.error);
+            if (this.nip05 && !this.userPubkey) {
+                const user = await NDKUser.fromNip05(this.nip05, this.ndk);
+
+                if (user) {
+                    this._user = user;
+                    this.userPubkey = user.pubkey;
+                    this.relayUrls = user.nip46Urls;
+                    this.rpc = new NDKNostrRpc(this.ndk, this.localSigner, this.debug, this.relayUrls, this.rpcOptions);
                 }
-            });
-        });
+            }
 
-        return this.withTimeout(promise, "blockUntilReady");
+            if (!this.bunkerPubkey && this.userPubkey) {
+                this.bunkerPubkey = this.userPubkey;
+            } else if (!this.bunkerPubkey) {
+                throw new Error("Bunker pubkey not set");
+            }
+            this.rpc.bunkerPubkey = this.bunkerPubkey;
+
+            await this.startListening();
+
+            this.rpc.on("authUrl", (...props) => {
+                this.emit("authUrl", ...props);
+            });
+
+            const promise = new Promise<NDKUser>((resolve, reject) => {
+                const connectParams = [this.userPubkey ?? ""];
+
+                if (this.secret) connectParams.push(this.secret);
+
+                const kemPubkeyBase64 = (this.localSigner as any)?.kemPublicKeyBase64;
+                const encPubkeyBase64 = (this.localSigner as any)?.encPublicKeyBase64;
+                const carriedPubkeyBase64 = kemPubkeyBase64 || encPubkeyBase64;
+                if (carriedPubkeyBase64) {
+                    if (!this.secret) connectParams.push("");
+                    connectParams.push(carriedPubkeyBase64);
+                }
+
+                if (!this.bunkerPubkey) throw new Error("Bunker pubkey not set");
+
+                this.rpc.sendRequest(this.bunkerPubkey, "connect", connectParams, 24133, (response: NDKRpcResponse) => {
+                    if (response.result === "ack") {
+                        this.getPublicKey().then(async (pubkey) => {
+                            this.userPubkey = pubkey;
+                            this._user = this.ndk.getUser({ pubkey });
+                            await this.switchRelays();
+                            resolve(this._user);
+                        }).catch(reject);
+                    } else {
+                        reject(new Error(response.error || "Connect rejected"));
+                    }
+                });
+            });
+
+            return this.withTimeout(promise, "blockUntilReady");
+        });
     }
 
     /**
@@ -472,15 +519,21 @@ export class NDKNip46Signer extends EventEmitter implements NDKSigner {
     public async getPublicKey(): Promise<Hexpubkey> {
         if (this.userPubkey) return this.userPubkey;
 
-        const promise = new Promise<Hexpubkey>((resolve, _reject) => {
-            if (!this.bunkerPubkey) throw new Error("Bunker pubkey not set");
+        return this.executeWithSelfHeal(async () => {
+            const promise = new Promise<Hexpubkey>((resolve, reject) => {
+                if (!this.bunkerPubkey) throw new Error("Bunker pubkey not set");
 
-            this.rpc.sendRequest(this.bunkerPubkey, "get_public_key", [], 24133, (response: NDKRpcResponse) => {
-                resolve(response.result);
+                this.rpc.sendRequest(this.bunkerPubkey, "get_public_key", [], 24133, (response: NDKRpcResponse) => {
+                    if (!response.error) {
+                        resolve(response.result);
+                    } else {
+                        reject(new Error(response.error));
+                    }
+                });
             });
-        });
 
-        return this.withTimeout(promise, "getPublicKey");
+            return this.withTimeout(promise, "getPublicKey");
+        });
     }
 
     public async encryptionEnabled(scheme?: NDKEncryptionScheme): Promise<NDKEncryptionScheme[]> {
@@ -492,32 +545,36 @@ export class NDKNip46Signer extends EventEmitter implements NDKSigner {
         if (scheme === "kem") {
             throw new Error("KEM encryption is browser-local; no encrypt RPC exists");
         }
-        return this.encryption(recipient, value, scheme, "encrypt");
+        return this.executeWithSelfHeal(async () => {
+            return this.encryption(recipient, value, scheme, "encrypt");
+        });
     }
 
     public async decrypt(sender: NDKUser, value: string, scheme: NDKEncryptionScheme = "nip04"): Promise<string> {
-        if (scheme === "kem") {
-            const promise = new Promise<string>((resolve, reject) => {
-                if (!this.bunkerPubkey) throw new Error("Bunker pubkey not set");
+        return this.executeWithSelfHeal(async () => {
+            if (scheme === "kem") {
+                const promise = new Promise<string>((resolve, reject) => {
+                    if (!this.bunkerPubkey) throw new Error("Bunker pubkey not set");
 
-                this.rpc.sendRequest(
-                    this.bunkerPubkey,
-                    "kem_decrypt",
-                    [value],
-                    24133,
-                    (response: NDKRpcResponse) => {
-                        if (!response.error) {
-                            resolve(response.result);
-                        } else {
-                            reject(response.error);
-                        }
-                    },
-                );
-            });
+                    this.rpc.sendRequest(
+                        this.bunkerPubkey,
+                        "kem_decrypt",
+                        [value],
+                        24133,
+                        (response: NDKRpcResponse) => {
+                            if (!response.error) {
+                                resolve(response.result);
+                            } else {
+                                reject(new Error(response.error));
+                            }
+                        },
+                    );
+                });
 
-            return this.withTimeout(promise, "kem_decrypt");
-        }
-        return this.encryption(sender, value, scheme, "decrypt");
+                return this.withTimeout(promise, "kem_decrypt");
+            }
+            return this.encryption(sender, value, scheme, "decrypt");
+        });
     }
 
     private async encryption(
@@ -538,7 +595,7 @@ export class NDKNip46Signer extends EventEmitter implements NDKSigner {
                     if (!response.error) {
                         resolve(response.result);
                     } else {
-                        reject(response.error);
+                        reject(new Error(response.error));
                     }
                 },
             );
@@ -548,26 +605,28 @@ export class NDKNip46Signer extends EventEmitter implements NDKSigner {
     }
 
     public async sign(event: NostrEvent): Promise<string> {
-        const promise = new Promise<string>((resolve, reject) => {
-            if (!this.bunkerPubkey) throw new Error("Bunker pubkey not set");
+        return this.executeWithSelfHeal(async () => {
+            const promise = new Promise<string>((resolve, reject) => {
+                if (!this.bunkerPubkey) throw new Error("Bunker pubkey not set");
 
-            this.rpc.sendRequest(
-                this.bunkerPubkey,
-                "sign_event",
-                [JSON.stringify(event)],
-                24133,
-                (response: NDKRpcResponse) => {
-                    if (!response.error) {
-                        const json = JSON.parse(response.result);
-                        resolve(json.sig);
-                    } else {
-                        reject(response.error);
-                    }
-                },
-            );
+                this.rpc.sendRequest(
+                    this.bunkerPubkey,
+                    "sign_event",
+                    [JSON.stringify(event)],
+                    24133,
+                    (response: NDKRpcResponse) => {
+                        if (!response.error) {
+                            const json = JSON.parse(response.result);
+                            resolve(json.sig);
+                        } else {
+                            reject(new Error(response.error));
+                        }
+                    },
+                );
+            });
+
+            return this.withTimeout(promise, "sign");
         });
-
-        return this.withTimeout(promise, "sign");
     }
 
     /**

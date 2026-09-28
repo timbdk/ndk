@@ -77,6 +77,7 @@ export class NDKNip46Backend {
         signer: NDKSigner,
         permitCallback: Nip46PermitCallback,
         relayUrls?: WebSocket["url"][],
+        rpcOptions?: NDKNostrRpcOptions,
     );
 
     /**
@@ -89,6 +90,7 @@ export class NDKNip46Backend {
         privateKey: string,
         permitCallback: Nip46PermitCallback,
         relayUrls?: WebSocket["url"][],
+        rpcOptions?: NDKNostrRpcOptions,
     );
 
     /**
@@ -257,3 +259,165 @@ export class NDKNip46Backend {
         return this.permitCallback(params);
     }
 }
+
+export interface Nip46SessionResolution {
+    keyName: string;
+    responseKemKey?: string;
+    identitySigner?: NDKSigner;
+    identityPubkey?: string;
+    context?: any;
+}
+
+export type Nip46SessionResolver = (
+    transportUid: string,
+    method?: string,
+    params?: any[],
+) => Promise<Nip46SessionResolution | undefined>;
+
+export type Nip46DaemonPermitCallback = (params: {
+    id: string;
+    pubkey: string;
+    keyName: string;
+    method: NIP46Method;
+    params?: any;
+}) => Promise<boolean>;
+
+export interface NDKNip46DaemonBackendOptions {
+    resolveSession: Nip46SessionResolver;
+    permitCallback?: Nip46DaemonPermitCallback;
+    relayUrls?: string[];
+    rpcOptions?: NDKNostrRpcOptions;
+    onStaleKeySent?: (transportUid: string) => void | Promise<void>;
+    onRequestReceived?: (req: { id: string; method: string; transportUid: string; keyName?: string }) => void | Promise<void>;
+    onResponseSent?: (res: { id: string; method: string; transportUid: string; keyName?: string }) => void | Promise<void>;
+}
+
+/**
+ * NDKNip46DaemonBackend
+ *
+ * Implements a consolidated daemon-mode NIP-46 backend.
+ * Subscribes to the daemon's UID on relay (#p: [H(daemon key)]) and decapsulates
+ * incoming envelopes with the daemon's transport KEM key.
+ *
+ * Incoming requests are resolved via `resolveSession(transportUid)` to per-identity contexts,
+ * and authorization checks are routed per-identity via `permitCallback`.
+ *
+ * If decapsulation fails for a known session, a KEM_STALE_KEY error is sent encapsulated
+ * to the session-bound KEM key. Unknown UIDs are dropped silently.
+ */
+export class NDKNip46DaemonBackend extends NDKNip46Backend {
+    public resolveSession: Nip46SessionResolver;
+    public daemonPermitCallback?: Nip46DaemonPermitCallback;
+    public onStaleKeySent?: (transportUid: string) => void | Promise<void>;
+    public onRequestReceived?: (req: { id: string; method: string; transportUid: string; keyName?: string }) => void | Promise<void>;
+    public onResponseSent?: (res: { id: string; method: string; transportUid: string; keyName?: string }) => void | Promise<void>;
+
+    public constructor(ndk: NDK, daemonSigner: NDKSigner, options: NDKNip46DaemonBackendOptions) {
+        const bridgeCb: Nip46PermitCallback = async (params) => {
+            if (options.permitCallback) {
+                const keyName = (params as any).keyName ?? "";
+                return options.permitCallback({ ...params, keyName });
+            }
+            return false;
+        };
+
+        super(ndk, daemonSigner, bridgeCb, options.relayUrls, options.rpcOptions);
+        this.resolveSession = options.resolveSession;
+        this.daemonPermitCallback = options.permitCallback;
+        this.onStaleKeySent = options.onStaleKeySent;
+        this.onRequestReceived = options.onRequestReceived;
+        this.onResponseSent = options.onResponseSent;
+    }
+
+    protected override async handleIncomingEvent(event: NDKEvent): Promise<void> {
+        if (!event.verifySignature(false)) {
+            this.debug("invalid signature", event.rawEvent());
+            return;
+        }
+
+        const transportUid = (event as any).uid ?? event.pubkey;
+
+        const parsed = await this.rpc.parseEvent(event);
+        if (!parsed) {
+            this.debug("could not parse or decapsulate incoming event", event.rawEvent());
+
+            const session = await this.resolveSession(transportUid);
+            if (session && session.responseKemKey) {
+                try {
+                    await this.rpc.sendResponse("", transportUid, "error", 24133, "KEM_STALE_KEY");
+                    this.debug(`sent KEM_STALE_KEY to known session ${transportUid}`);
+                    if (this.onStaleKeySent) {
+                        await this.onStaleKeySent(transportUid);
+                    }
+                } catch (sendErr) {
+                    this.debug("failed to send KEM_STALE_KEY response", sendErr);
+                }
+            } else {
+                this.debug(`undecapsulatable request from unknown uid ${transportUid}, dropping silently`);
+            }
+            return;
+        }
+
+        const { id, method, params, pubkey } = parsed as any;
+        const remotePubkey = pubkey ?? transportUid;
+
+        const session = await this.resolveSession(remotePubkey, method, params);
+        const keyName = session?.keyName;
+
+        if (this.onRequestReceived) {
+            await this.onRequestReceived({ id, method, transportUid: remotePubkey, keyName });
+        }
+
+        const requestContext = Object.create(this);
+        requestContext.sessionBinding = session;
+        requestContext.keyName = keyName;
+        requestContext.identitySigner = session?.identitySigner;
+        requestContext.pubkeyAllowed = async (p: Nip46PermitCallbackParams) => {
+            if (this.daemonPermitCallback && keyName) {
+                return this.daemonPermitCallback({ ...p, keyName });
+            }
+            return this.pubkeyAllowed(p);
+        };
+
+        let response: string | undefined;
+        let errorHandled = false;
+
+        const strategy = this.handlers[method];
+        if (strategy) {
+            try {
+                response = await strategy.handle(requestContext, id, remotePubkey, params);
+            } catch (e: any) {
+                this.debug("error handling event", e, { id, method, params });
+                errorHandled = true;
+                try {
+                    await this.rpc.sendResponse(id, remotePubkey, "error", undefined, e.message);
+                } catch (sendError: any) {
+                    this.debug("failed to send error response", sendError);
+                }
+            }
+        } else {
+            this.debug("unsupported method", { method, params });
+        }
+
+        if (!errorHandled) {
+            try {
+                if (response) {
+                    await this.rpc.sendResponse(id, remotePubkey, response);
+                } else {
+                    await this.rpc.sendResponse(id, remotePubkey, "error", undefined, "Not authorized");
+                }
+            } catch (sendError: any) {
+                this.debug("failed to send response", sendError);
+            }
+        }
+
+        if (this.onResponseSent) {
+            await this.onResponseSent({ id, method, transportUid: remotePubkey, keyName });
+        }
+
+        if (method === "switch_relays" && response) {
+            this.rpc.updateRelays(this.relayUrls);
+        }
+    }
+}
+
