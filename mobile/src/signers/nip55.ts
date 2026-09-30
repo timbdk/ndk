@@ -68,68 +68,15 @@ export class NDKNip55Signer implements NDKSigner {
      * @return A promised list of any (or none) of these strings  ['nip04', 'nip44']
      */
     async encryptionEnabled?(scheme?: NDKEncryptionScheme): Promise<NDKEncryptionScheme[]> {
-        if (scheme) return [scheme];
-        return Promise.resolve(["nip04", "nip44"]);
+        return [];
     }
 
-    /**
-     * Encrypts the given Nostr event for the given recipient.
-     * Implementing classes SHOULD equate legacy (only nip04) to nip == `nip04` || undefined
-     * @param recipient - The recipient (pubkey or conversationKey) of the encrypted value.
-     * @param value - The value to be encrypted.
-     * @param nip - which NIP is being implemented ('nip04', 'nip44')
-     */
     async encrypt(recipient: NDKUser, value: string, scheme?: NDKEncryptionScheme): Promise<string> {
-        const randomId = Math.random().toString(36).substring(2, 15);
-        if (scheme === "nip04") {
-            const result = (await Nip55.nip04Encrypt(
-                this.packageName,
-                value,
-                randomId,
-                recipient.pubkey,
-                this._pubkey,
-            )) as unknown as { result: string };
-            return result.result;
-        } else {
-            const result = (await Nip55.nip44Encrypt(
-                this.packageName,
-                value,
-                randomId,
-                recipient.pubkey,
-                this._pubkey,
-            )) as unknown as { result: string };
-            return result.result;
-        }
+        throw new Error("KEM encryption is not supported by NIP-55");
     }
 
-    /**
-     * Decrypts the given value.
-     * Implementing classes SHOULD equate legacy (only nip04) to nip == `nip04` || undefined
-     * @param sender - The sender (pubkey or conversationKey) of the encrypted value
-     * @param value - The value to be decrypted
-     * @param scheme - which NIP is being implemented ('nip04', 'nip44', 'nip49')
-     */
     async decrypt(sender: NDKUser, value: string, scheme?: NDKEncryptionScheme): Promise<string> {
-        const randomId = Math.random().toString(36).substring(2, 15);
-        if (scheme === "nip04") {
-            const result = (await Nip55.nip04Decrypt(
-                this.packageName,
-                value,
-                randomId,
-                this.pubkey,
-                sender.pubkey,
-            )) as unknown as { result: string };
-            return result.result;
-        } else {
-            const result = (await Nip55.nip44Decrypt(
-                this.packageName,
-                value,
-                randomId,
-                this.pubkey,
-                sender.pubkey,
-            )) as unknown as { result: string };
-            return result.result;
-        }
+        throw new Error("KEM encryption is not supported by NIP-55");
     }
 
     /**

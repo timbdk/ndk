@@ -1,44 +1,42 @@
-import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
 import { base64 } from "@scure/base";
 import type { NostrEvent } from "../../events/index.js";
 import type { NDK } from "../../ndk/index.js";
 import type { NDKEncryptionScheme } from "../../types.js";
-import { NDKUser } from "../../user";
+import { NDKUser } from "../../user/index.js";
 import type { NDKSigner } from "../index.js";
 import { NDKMlDsaSigner } from "../ml-dsa/index.js";
-import { NDKPrivateKeySigner } from "../private-key/index.js";
 import { registerSigner } from "../registry.js";
 import {
     kemDecrypt,
     kemEncrypt,
+    kemKeygen,
     kemPublicKeyFromSecret,
     parseRawBytes,
     KEM_SECRET_KEY_BYTES,
 } from "../kem/index.js";
 
 export interface NDKTransportCredentialOptions {
-    ecdh?: Uint8Array | string | NDKPrivateKeySigner;
     kem?: Uint8Array | string;
 }
 
 /**
- * A composite credential holding an ML-DSA signing half, an optional ML-KEM-768 half,
- * and an optional classical ECDH encryption half (during the dual-window transition).
+ * A composite credential holding an ML-DSA signing half and an ML-KEM-768 encryption half.
+ * Classical ECDH is permanently disposed.
  *
  * Enforces role separation:
  * - sign() uses ML-DSA exclusively.
  * - kemDecaps() uses ML-KEM exclusively.
- * - Calling classical encrypt/decrypt throws when ECDH half is absent (e.g. on client).
+ * - Classical encrypt/decrypt throw.
  */
 export class NDKTransportCredential implements NDKSigner {
     private _signingSigner: NDKMlDsaSigner;
-    private _ecdhSigner?: NDKPrivateKeySigner;
     private _kemSecretKey?: Uint8Array;
     private _kemPublicKey?: Uint8Array;
 
     public constructor(
         signingKeyOrSigner: Uint8Array | string | NDKMlDsaSigner,
-        ecdhOrOptions?: Uint8Array | string | NDKPrivateKeySigner | NDKTransportCredentialOptions | null,
+        optionsOrKem?: Uint8Array | string | NDKTransportCredentialOptions | null,
         kemKeyOrNdk?: Uint8Array | string | NDK,
         ndk?: NDK
     ) {
@@ -48,37 +46,21 @@ export class NDKTransportCredential implements NDKSigner {
             this._signingSigner = new NDKMlDsaSigner(signingKeyOrSigner, ndk);
         }
 
-        let effectiveNdk = ndk;
-        let ecdhArg: Uint8Array | string | NDKPrivateKeySigner | undefined;
         let kemArg: Uint8Array | string | undefined;
 
         if (
-            ecdhOrOptions &&
-            typeof ecdhOrOptions === "object" &&
-            !(ecdhOrOptions instanceof NDKPrivateKeySigner) &&
-            !(ecdhOrOptions instanceof Uint8Array) &&
-            typeof (ecdhOrOptions as any).sign !== "function"
+            optionsOrKem &&
+            typeof optionsOrKem === "object" &&
+            !(optionsOrKem instanceof Uint8Array) &&
+            typeof (optionsOrKem as any).sign !== "function"
         ) {
-            ecdhArg = (ecdhOrOptions as NDKTransportCredentialOptions).ecdh;
-            kemArg = (ecdhOrOptions as NDKTransportCredentialOptions).kem;
-            if (kemKeyOrNdk && typeof (kemKeyOrNdk as any)?.pool !== "undefined") {
-                effectiveNdk = kemKeyOrNdk as NDK;
-            }
-        } else {
-            ecdhArg = (ecdhOrOptions as Uint8Array | string | NDKPrivateKeySigner) ?? undefined;
-            if (kemKeyOrNdk && typeof (kemKeyOrNdk as any)?.pool !== "undefined") {
-                effectiveNdk = kemKeyOrNdk as NDK;
-            } else if (kemKeyOrNdk) {
-                kemArg = kemKeyOrNdk as Uint8Array | string;
-            }
+            kemArg = (optionsOrKem as NDKTransportCredentialOptions).kem;
+        } else if (typeof optionsOrKem === "string" || optionsOrKem instanceof Uint8Array) {
+            kemArg = optionsOrKem;
         }
 
-        if (ecdhArg) {
-            if (ecdhArg instanceof NDKPrivateKeySigner || typeof (ecdhArg as any)?.sign === "function") {
-                this._ecdhSigner = ecdhArg as NDKPrivateKeySigner;
-            } else {
-                this._ecdhSigner = new NDKPrivateKeySigner(ecdhArg, effectiveNdk);
-            }
+        if (!kemArg && (typeof kemKeyOrNdk === "string" || kemKeyOrNdk instanceof Uint8Array)) {
+            kemArg = kemKeyOrNdk;
         }
 
         if (kemArg) {
@@ -94,24 +76,12 @@ export class NDKTransportCredential implements NDKSigner {
 
     public static generate(): NDKTransportCredential {
         const signingSigner = NDKMlDsaSigner.generate();
-        const ecdhSigner = NDKPrivateKeySigner.generate();
-        return new NDKTransportCredential(signingSigner, ecdhSigner);
+        const kemKey = kemKeygen();
+        return new NDKTransportCredential(signingSigner, { kem: kemKey.secretKey });
     }
 
     get signingSigner(): NDKMlDsaSigner {
         return this._signingSigner;
-    }
-
-    get ecdhSigner(): NDKPrivateKeySigner | undefined {
-        return this._ecdhSigner;
-    }
-
-    get encPublicKey(): string | undefined {
-        return this._ecdhSigner?.pubkey;
-    }
-
-    get encPublicKeyBase64(): string | undefined {
-        return this._ecdhSigner ? base64.encode(hexToBytes(this._ecdhSigner.pubkey)) : undefined;
     }
 
     get kemPublicKey(): string | undefined {
@@ -162,11 +132,8 @@ export class NDKTransportCredential implements NDKSigner {
     }
 
     public async encryptionEnabled(scheme?: NDKEncryptionScheme): Promise<NDKEncryptionScheme[]> {
-        if (scheme === "kem") {
+        if (scheme === "kem" || !scheme) {
             return this._kemSecretKey ? ["kem"] : [];
-        }
-        if (this._ecdhSigner) {
-            return this._ecdhSigner.encryptionEnabled(scheme);
         }
         return [];
     }
@@ -175,20 +142,14 @@ export class NDKTransportCredential implements NDKSigner {
         if (scheme === "kem") {
             throw new Error("Local KEM encryption should be performed via kemEncaps() or EDM kemEncrypt()");
         }
-        if (!this._ecdhSigner) {
-            throw new Error("Classical encryption not supported on this credential (ECDH half absent)");
-        }
-        return this._ecdhSigner.encrypt(recipient, value, scheme);
+        throw new Error("Classical encryption not supported on transport credential (disposed)");
     }
 
     public async decrypt(sender: NDKUser, value: string, scheme?: NDKEncryptionScheme): Promise<string> {
         if (scheme === "kem") {
             return this.kemDecaps(value);
         }
-        if (!this._ecdhSigner) {
-            throw new Error("Classical decryption not supported on this credential (ECDH half absent)");
-        }
-        return this._ecdhSigner.decrypt(sender, value, scheme);
+        throw new Error("Classical decryption not supported on transport credential (disposed)");
     }
 
     public toPayload(): string {
@@ -196,7 +157,6 @@ export class NDKTransportCredential implements NDKSigner {
             type: "transport-credential",
             payload: JSON.stringify({
                 signingPayload: this._signingSigner.toPayload(),
-                ecdhPayload: this._ecdhSigner?.toPayload(),
                 kemSecretKey: this._kemSecretKey ? bytesToHex(this._kemSecretKey) : undefined,
             }),
         };
@@ -216,9 +176,8 @@ export class NDKTransportCredential implements NDKSigner {
 
         const inner = JSON.parse(payload.payload);
         const signingSigner = await NDKMlDsaSigner.fromPayload(inner.signingPayload, ndk);
-        const ecdhSigner = inner.ecdhPayload ? await NDKPrivateKeySigner.fromPayload(inner.ecdhPayload, ndk) : undefined;
 
-        return new NDKTransportCredential(signingSigner, { ecdh: ecdhSigner, kem: inner.kemSecretKey }, ndk);
+        return new NDKTransportCredential(signingSigner, { kem: inner.kemSecretKey }, ndk);
     }
 }
 

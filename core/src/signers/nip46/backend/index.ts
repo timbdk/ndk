@@ -8,10 +8,6 @@ import { NDKPrivateKeySigner } from "../../private-key/index.js";
 import { NDKNostrRpc, type NDKNostrRpcOptions } from "../rpc.js";
 import ConnectEventHandlingStrategy from "./connect.js";
 import GetPublicKeyHandlingStrategy from "./get-public-key.js";
-import Nip04DecryptHandlingStrategy from "./nip04-decrypt.js";
-import Nip04EncryptHandlingStrategy from "./nip04-encrypt.js";
-import Nip44DecryptHandlingStrategy from "./nip44-decrypt.js";
-import Nip44EncryptHandlingStrategy from "./nip44-encrypt.js";
 import KemDecryptHandlingStrategy from "./kem-decrypt.js";
 import PingEventHandlingStrategy from "./ping.js";
 import SignEventHandlingStrategy from "./sign-event.js";
@@ -20,10 +16,6 @@ import SwitchRelaysEventHandlingStrategy from "./switch-relays.js";
 export type NIP46Method =
     | "connect"
     | "sign_event"
-    | "nip04_encrypt"
-    | "nip04_decrypt"
-    | "nip44_encrypt"
-    | "nip44_decrypt"
     | "kem_decrypt"
     | "get_public_key"
     | "ping"
@@ -142,11 +134,6 @@ export class NDKNip46Backend {
         } catch {
             // ignore
         }
-        const ecdhPubkey = (this.signer as any).ecdhSigner?.pubkey;
-        if (ecdhPubkey && !pTags.includes(ecdhPubkey)) {
-            pTags.push(ecdhPubkey);
-        }
-
         this.ndk.subscribe(
             {
                 kinds: [24133 as number],
@@ -162,10 +149,6 @@ export class NDKNip46Backend {
     public handlers: { [method: string]: IEventHandlingStrategy } = {
         connect: new ConnectEventHandlingStrategy(),
         sign_event: new SignEventHandlingStrategy(),
-        nip04_encrypt: new Nip04EncryptHandlingStrategy(),
-        nip04_decrypt: new Nip04DecryptHandlingStrategy(),
-        nip44_encrypt: new Nip44EncryptHandlingStrategy(),
-        nip44_decrypt: new Nip44DecryptHandlingStrategy(),
         kem_decrypt: new KemDecryptHandlingStrategy(),
         get_public_key: new GetPublicKeyHandlingStrategy(),
         ping: new PingEventHandlingStrategy(),

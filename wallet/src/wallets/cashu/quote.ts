@@ -63,7 +63,7 @@ export class NDKCashuQuote extends NDKEvent {
             unit: this.unit,
         });
 
-        await this.encrypt(this.ndk.activeUser, undefined, "nip44");
+        await this.encrypt(this.ndk.activeUser, undefined, "kem");
         await this.sign();
         await this.publish(this._wallet?.relaySet);
     }

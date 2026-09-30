@@ -36,7 +36,7 @@ export async function giftWrap(
     params: GiftWrapParams = {},
 ): Promise<NDKEvent> {
     let _signer = signer;
-    params.scheme ??= "nip44";
+    params.scheme ??= "kem";
     if (!_signer) {
         if (!event.ndk) throw new Error("no signer available for giftWrap");
         _signer = event.ndk.signer;
@@ -74,7 +74,7 @@ export async function giftUnwrap(
     event: NDKEvent,
     sender?: NDKUser,
     signer?: NDKSigner,
-    scheme: NDKEncryptionScheme = "nip44",
+    scheme: NDKEncryptionScheme = "kem",
 ): Promise<NDKEvent> {
     // Check cache first
     if (event.ndk?.cacheAdapter?.getDecryptedEvent) {
@@ -125,7 +125,7 @@ async function getSealEvent(
     rumor: NDKEvent,
     recipient: NDKUser,
     signer: NDKSigner,
-    scheme: NDKEncryptionScheme = "nip44",
+    scheme: NDKEncryptionScheme = "kem",
 ): Promise<NDKEvent> {
     const seal = new NDKEvent(rumor.ndk);
     seal.kind = NDKKind.GiftWrapSeal;
@@ -144,7 +144,7 @@ async function getWrapEvent(
     sealed: NDKEvent,
     recipient: NDKUser,
     params?: GiftWrapParams,
-    scheme: NDKEncryptionScheme = "nip44",
+    scheme: NDKEncryptionScheme = "kem",
 ): Promise<NDKEvent> {
     const signer = NDKPrivateKeySigner.generate();
 

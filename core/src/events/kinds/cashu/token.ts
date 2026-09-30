@@ -111,7 +111,7 @@ export class NDKCashuToken extends NDKEvent {
         this.content = JSON.stringify(payload);
 
         const user = await this.ndk.signer.user();
-        await this.encrypt(user, undefined, "nip44");
+        await this.encrypt(user, undefined, "kem");
 
         return super.toNostrEvent(pubkey);
     }

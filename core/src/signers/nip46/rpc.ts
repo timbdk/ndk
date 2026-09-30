@@ -28,7 +28,7 @@ export interface NDKRpcResponse {
 }
 
 export interface NDKNostrRpcOptions {
-    envelopeMode?: "kem" | "classical";
+    envelopeMode?: "kem";
     requestPeerKemKey?: string;
     resolvePeerKemKey?: (recipientUid: string) => Promise<string | undefined> | string | undefined;
     responseCapable?: boolean;
@@ -39,13 +39,10 @@ export class NDKNostrRpc extends EventEmitter {
     private signer: NDKSigner;
     private relaySet: NDKRelaySet | undefined;
     private debug: debug.Debugger;
-    public envelopeMode: "kem" | "classical";
+    public envelopeMode: "kem";
     public requestPeerKemKey?: string;
     public resolvePeerKemKey?: (recipientUid: string) => Promise<string | undefined> | string | undefined;
     public bunkerPubkey?: string;
-    public adminEcdhPubkeys?: Map<string, string>;
-    public peerEcdhPubkeys: Map<string, string> = new Map();
-    public resolvePeerEcdhPubkey?: (authorUid: string) => Promise<string | undefined> | string | undefined;
     private pool: NDKPool | undefined;
 
     public constructor(
@@ -58,15 +55,13 @@ export class NDKNostrRpc extends EventEmitter {
         super();
         this.ndk = ndk;
         this.signer = signer;
-        this.envelopeMode = options?.envelopeMode ?? "classical";
+        this.envelopeMode = "kem";
         this.requestPeerKemKey = options?.requestPeerKemKey;
         this.resolvePeerKemKey = options?.resolvePeerKemKey;
 
-        if (this.envelopeMode === "kem") {
-            const isResponseCapable = options?.responseCapable === true;
-            if (isResponseCapable && !this.resolvePeerKemKey) {
-                throw new Error("Response-capable KEM RPC instance requires resolvePeerKemKey");
-            }
+        const isResponseCapable = options?.responseCapable === true;
+        if (isResponseCapable && !this.resolvePeerKemKey) {
+            throw new Error("Response-capable KEM RPC instance requires resolvePeerKemKey");
         }
 
         // if we have relays, we create a separate pool for it
@@ -167,91 +162,22 @@ export class NDKNostrRpc extends EventEmitter {
         const authorUid = (event as any).uid ?? event.pubkey;
         let decryptedContent: string;
 
-        if (this.envelopeMode === "kem") {
-            if (!event.content || !event.content.startsWith("kem1:")) {
-                this.debug("rejecting non-kem1 event in kem envelopeMode", event.rawEvent());
-                return null;
+        if (!event.content || !event.content.startsWith("kem1:")) {
+            this.debug("rejecting non-kem1 event in kem envelopeMode", event.rawEvent());
+            return null;
+        }
+        try {
+            if (typeof (this.signer as any)?.kemDecaps === "function") {
+                decryptedContent = (this.signer as any).kemDecaps(event.content);
+            } else if (typeof (this.signer as any)?.kemDecrypt === "function") {
+                decryptedContent = await (this.signer as any).kemDecrypt(event.content);
+            } else {
+                decryptedContent = await this.signer.decrypt(undefined as any, event.content, "kem");
             }
-            try {
-                if (typeof (this.signer as any)?.kemDecaps === "function") {
-                    decryptedContent = (this.signer as any).kemDecaps(event.content);
-                } else if (typeof (this.signer as any)?.kemDecrypt === "function") {
-                    decryptedContent = await (this.signer as any).kemDecrypt(event.content);
-                } else {
-                    decryptedContent = await this.signer.decrypt(undefined as any, event.content, "kem");
-                }
-            } catch (e) {
-                this.debug("error decapsulating KEM event", e, event.rawEvent());
-                this.emit("decapsulation:failed", { event, error: e });
-                return null;
-            }
-        } else {
-            let remotePubkeyHex = authorUid;
-            let isSecp256k1 = false;
-            if (event.key && event.key.includes(":")) {
-                try {
-                    const [alg, b64] = event.key.split(":");
-                    if (alg === "secp256k1-schnorr" || alg === "secp256k1" || alg === "secp256k1-nip44") {
-                        remotePubkeyHex = bytesToHex(base64.decode(b64));
-                        isSecp256k1 = true;
-                    }
-                } catch {
-                    // fallback
-                }
-            }
-            if (!isSecp256k1) {
-                const encTag = event.tags?.find((t: string[]) => t[0] === "enc");
-                if (encTag && encTag[1]) {
-                    try {
-                        const decoded = base64.decode(encTag[1]);
-                        if (decoded.length === 32) {
-                            const encHex = bytesToHex(decoded);
-                            this.peerEcdhPubkeys.set(authorUid, encHex);
-                            remotePubkeyHex = encHex;
-                            isSecp256k1 = true;
-                        }
-                    } catch {
-                        // fallback
-                    }
-                }
-            }
-            if (!isSecp256k1 && this.resolvePeerEcdhPubkey) {
-                try {
-                    const resolved = await this.resolvePeerEcdhPubkey(authorUid);
-                    if (resolved) {
-                        this.peerEcdhPubkeys.set(authorUid, resolved);
-                        remotePubkeyHex = resolved;
-                        isSecp256k1 = true;
-                    }
-                } catch {
-                    // fallback
-                }
-            }
-            if (!isSecp256k1 && this.peerEcdhPubkeys.has(authorUid)) {
-                remotePubkeyHex = this.peerEcdhPubkeys.get(authorUid)!;
-                isSecp256k1 = true;
-            }
-            if (!isSecp256k1 && this.adminEcdhPubkeys) {
-                const mappedEcdh = this.adminEcdhPubkeys.get(authorUid);
-                if (mappedEcdh) {
-                    this.peerEcdhPubkeys.set(authorUid, mappedEcdh);
-                    remotePubkeyHex = mappedEcdh;
-                    isSecp256k1 = true;
-                }
-            }
-            if ((!isSecp256k1 || remotePubkeyHex.length !== 64) && this.bunkerPubkey) {
-                remotePubkeyHex = this.bunkerPubkey;
-            }
-
-            const remoteUser = this.ndk.getUser({ pubkey: remotePubkeyHex });
-            remoteUser.ndk = this.ndk;
-
-            try {
-                decryptedContent = await this.signer.decrypt(remoteUser, event.content, "nip44");
-            } catch (e) {
-                this.debug("error decrypting event", e, event.rawEvent());
-                return null;
-            }
+        } catch (e) {
+            this.debug("error decapsulating KEM event", e, event.rawEvent());
+            this.emit("decapsulation:failed", { event, error: e });
+            return null;
         }
 
         let parsedContent: any;
@@ -304,14 +230,6 @@ export class NDKNostrRpc extends EventEmitter {
             tags.push(["p", remoteUid]);
             tags.push(["policy", "allow", "user", remoteUid]);
         }
-        if (this.adminEcdhPubkeys) {
-            for (const [uid, ecdh] of this.adminEcdhPubkeys.entries()) {
-                if (ecdh === remotePubkey && uid !== targetP && uid !== remoteUid) {
-                    tags.push(["p", uid]);
-                    tags.push(["policy", "allow", "user", uid]);
-                }
-            }
-        }
         if (extraTags) {
             tags.push(...extraTags);
         }
@@ -329,59 +247,22 @@ export class NDKNostrRpc extends EventEmitter {
         }
         event.key = `ml-dsa-44:${base64.encode(localKeyBytes)}`;
 
-        if (this.envelopeMode === "kem") {
-            if (!this.resolvePeerKemKey) {
-                throw new Error(
-                    `No recipient KEM public key available for response to ${remotePubkey}: resolvePeerKemKey is not configured`
-                );
-            }
-            let recipientKemKey = await this.resolvePeerKemKey(remotePubkey);
-            if (!recipientKemKey && remoteUid !== remotePubkey) {
-                recipientKemKey = await this.resolvePeerKemKey(remoteUid);
-            }
-            if (!recipientKemKey) {
-                this.debug?.(
-                    `No recipient KEM public key available for response to ${remotePubkey}: resolvePeerKemKey returned no key, skipping send`
-                );
-                return;
-            }
-            event.content = kemEncrypt(recipientKemKey, event.content);
-        } else {
-            let encTargetPubkey = remotePubkey;
-            if (this.resolvePeerEcdhPubkey) {
-                let resolved = await this.resolvePeerEcdhPubkey(remotePubkey);
-                if (!resolved && remoteUid !== remotePubkey) {
-                    resolved = await this.resolvePeerEcdhPubkey(remoteUid);
-                }
-                if (resolved) {
-                    encTargetPubkey = resolved;
-                }
-            }
-            if (encTargetPubkey === remotePubkey && this.peerEcdhPubkeys.has(remotePubkey)) {
-                encTargetPubkey = this.peerEcdhPubkeys.get(remotePubkey)!;
-            } else if (encTargetPubkey === remotePubkey && this.peerEcdhPubkeys.has(remoteUid)) {
-                encTargetPubkey = this.peerEcdhPubkeys.get(remoteUid)!;
-            }
-            if (encTargetPubkey === remotePubkey && this.adminEcdhPubkeys?.has(remotePubkey)) {
-                encTargetPubkey = this.adminEcdhPubkeys.get(remotePubkey)!;
-            } else if (encTargetPubkey === remotePubkey && this.adminEcdhPubkeys?.has(remoteUid)) {
-                encTargetPubkey = this.adminEcdhPubkeys.get(remoteUid)!;
-            }
-
-            if (encTargetPubkey === remotePubkey && (remotePubkey.length === 2624 || remoteKeyBytes.length === 32)) {
-                throw new Error(
-                    `Cannot send NIP-46 response to ${remotePubkey}: no ECDH encryption public key resolved for peer`
-                );
-            }
-
-            const encPubkeyBase64 = (this.signer as any)?.encPublicKeyBase64;
-            if (encPubkeyBase64) {
-                tags.push(["enc", encPubkeyBase64]);
-            }
-
-            const remoteUser = this.ndk.getUser({ pubkey: encTargetPubkey });
-            event.content = await this.signer.encrypt(remoteUser, event.content, "nip44");
+        if (!this.resolvePeerKemKey) {
+            throw new Error(
+                `No recipient KEM public key available for response to ${remotePubkey}: resolvePeerKemKey is not configured`
+            );
         }
+        let recipientKemKey = await this.resolvePeerKemKey(remotePubkey);
+        if (!recipientKemKey && remoteUid !== remotePubkey) {
+            recipientKemKey = await this.resolvePeerKemKey(remoteUid);
+        }
+        if (!recipientKemKey) {
+            this.debug?.(
+                `No recipient KEM public key available for response to ${remotePubkey}: resolvePeerKemKey returned no key, skipping send`
+            );
+            return;
+        }
+        event.content = kemEncrypt(recipientKemKey, event.content);
 
         await event.sign(this.signer);
         await event.publish(this.relaySet);
@@ -449,19 +330,10 @@ export class NDKNostrRpc extends EventEmitter {
         }
         event.key = `ml-dsa-44:${base64.encode(localKeyBytes)}`;
 
-        if (this.envelopeMode === "kem") {
-            if (!this.requestPeerKemKey) {
-                throw new Error("Cannot send KEM RPC request: requestPeerKemKey is not configured");
-            }
-            event.content = kemEncrypt(this.requestPeerKemKey, event.content);
-        } else {
-            const encPubkeyBase64 = (this.signer as any)?.encPublicKeyBase64;
-            if (encPubkeyBase64) {
-                reqTags.push(["enc", encPubkeyBase64]);
-            }
-            const remoteUser = this.ndk.getUser({ pubkey: remotePubkey });
-            event.content = await this.signer.encrypt(remoteUser, event.content, "nip44");
+        if (!this.requestPeerKemKey) {
+            throw new Error("Cannot send KEM RPC request: requestPeerKemKey is not configured");
         }
+        event.content = kemEncrypt(this.requestPeerKemKey, event.content);
 
         await event.sign(this.signer);
         await event.publish(this.relaySet);

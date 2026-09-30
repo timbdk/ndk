@@ -559,7 +559,7 @@ export class NDKCashuWallet extends NDKWallet {
         });
 
         const user = await this.ndk?.signer?.user();
-        await event.encrypt(user, undefined, "nip44");
+        await event.encrypt(user, undefined, "kem");
 
         return event.publish(this.relaySet);
     }
@@ -618,7 +618,7 @@ export class NDKCashuWallet extends NDKWallet {
         });
 
         const user = await this.ndk?.signer?.user();
-        await event.encrypt(user, undefined, "nip44");
+        await event.encrypt(user, undefined, "kem");
 
         return event.publishReplaceable(this.relaySet);
     }
@@ -895,7 +895,7 @@ export class NDKCashuWalletBackup extends NDKEvent {
         if (!this.ndk) throw new Error("no ndk instance");
         if (!this.privkeys.length) throw new Error("no privkeys");
         this.content = JSON.stringify(payloadForEvent(this.privkeys, this.mints));
-        await this.encrypt(this.ndk.activeUser!, undefined, "nip44");
+        await this.encrypt(this.ndk.activeUser!, undefined, "kem");
         return this.publish(relaySet);
     }
 }

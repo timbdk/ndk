@@ -85,7 +85,7 @@ export async function sendReq<M extends keyof NDKNWCRequestMap>(
         content: JSON.stringify({ method, params }),
     } as NostrEvent);
 
-    await event.encrypt(this.walletService, this.signer, "nip04");
+    await event.encrypt(this.walletService, this.signer, "kem");
     await event.sign(this.signer);
 
     // Create base response promise

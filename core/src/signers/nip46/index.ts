@@ -1,5 +1,4 @@
 import { EventEmitter } from "tseep";
-import type { EncryptionMethod } from "../../events/encryption.js";
 import type { NostrEvent } from "../../events/index.js";
 import { NDKKind } from "../../events/kinds/index.js";
 import type { NDK } from "../../ndk/index.js";
@@ -440,9 +439,7 @@ export class NDKNip46Signer extends EventEmitter implements NDKSigner {
 
                 if (this.secret) connectParams.push(this.secret);
 
-                const kemPubkeyBase64 = (this.localSigner as any)?.kemPublicKeyBase64;
-                const encPubkeyBase64 = (this.localSigner as any)?.encPublicKeyBase64;
-                const carriedPubkeyBase64 = kemPubkeyBase64 || encPubkeyBase64;
+                const carriedPubkeyBase64 = (this.localSigner as any)?.kemPublicKeyBase64;
                 if (carriedPubkeyBase64) {
                     if (!this.secret) connectParams.push("");
                     connectParams.push(carriedPubkeyBase64);
@@ -537,71 +534,44 @@ export class NDKNip46Signer extends EventEmitter implements NDKSigner {
     }
 
     public async encryptionEnabled(scheme?: NDKEncryptionScheme): Promise<NDKEncryptionScheme[]> {
-        if (scheme) return [scheme];
-        return Promise.resolve(["nip04", "nip44", "kem"]);
+        if (scheme) {
+            return scheme === "kem" ? ["kem"] : [];
+        }
+        return Promise.resolve(["kem"]);
     }
 
-    public async encrypt(recipient: NDKUser, value: string, scheme: NDKEncryptionScheme = "nip04"): Promise<string> {
-        if (scheme === "kem") {
-            throw new Error("KEM encryption is browser-local; no encrypt RPC exists");
+    public async encrypt(recipient: NDKUser, value: string, scheme: NDKEncryptionScheme = "kem"): Promise<string> {
+        if (scheme !== "kem") {
+            throw new Error(`Unsupported encryption scheme '${scheme}': only 'kem' is supported`);
+        }
+        throw new Error("KEM encryption is browser-local; no encrypt RPC exists");
+    }
+
+    public async decrypt(sender: NDKUser, value: string, scheme: NDKEncryptionScheme = "kem"): Promise<string> {
+        if (scheme !== "kem") {
+            throw new Error(`Unsupported encryption scheme '${scheme}': only 'kem' is supported`);
         }
         return this.executeWithSelfHeal(async () => {
-            return this.encryption(recipient, value, scheme, "encrypt");
+            const promise = new Promise<string>((resolve, reject) => {
+                if (!this.bunkerPubkey) throw new Error("Bunker pubkey not set");
+
+                this.rpc.sendRequest(
+                    this.bunkerPubkey,
+                    "kem_decrypt",
+                    [value],
+                    24133,
+                    (response: NDKRpcResponse) => {
+                        if (!response.error) {
+                            resolve(response.result);
+                        } else {
+                            reject(new Error(response.error));
+                        }
+                    },
+                );
+            });
+
+            return this.withTimeout(promise, "kem_decrypt");
         });
-    }
-
-    public async decrypt(sender: NDKUser, value: string, scheme: NDKEncryptionScheme = "nip04"): Promise<string> {
-        return this.executeWithSelfHeal(async () => {
-            if (scheme === "kem") {
-                const promise = new Promise<string>((resolve, reject) => {
-                    if (!this.bunkerPubkey) throw new Error("Bunker pubkey not set");
-
-                    this.rpc.sendRequest(
-                        this.bunkerPubkey,
-                        "kem_decrypt",
-                        [value],
-                        24133,
-                        (response: NDKRpcResponse) => {
-                            if (!response.error) {
-                                resolve(response.result);
-                            } else {
-                                reject(new Error(response.error));
-                            }
-                        },
-                    );
-                });
-
-                return this.withTimeout(promise, "kem_decrypt");
-            }
-            return this.encryption(sender, value, scheme, "decrypt");
-        });
-    }
-
-    private async encryption(
-        peer: NDKUser,
-        value: string,
-        scheme: NDKEncryptionScheme,
-        method: EncryptionMethod,
-    ): Promise<string> {
-        const promise = new Promise<string>((resolve, reject) => {
-            if (!this.bunkerPubkey) throw new Error("Bunker pubkey not set");
-
-            this.rpc.sendRequest(
-                this.bunkerPubkey,
-                `${scheme}_${method}`,
-                [peer.pubkey, value],
-                24133,
-                (response: NDKRpcResponse) => {
-                    if (!response.error) {
-                        resolve(response.result);
-                    } else {
-                        reject(new Error(response.error));
-                    }
-                },
-            );
-        });
-
-        return this.withTimeout(promise, method);
     }
 
     public async sign(event: NostrEvent): Promise<string> {

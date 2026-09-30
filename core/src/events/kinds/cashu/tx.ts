@@ -161,7 +161,7 @@ export class NDKCashuWalletTx extends NDKEvent {
             this.tags = this.tags.filter((t) => t[0] !== "p" || t[1] !== ownPubkey);
         }
 
-        await this.encrypt(user, undefined, "nip44");
+        await this.encrypt(user, undefined, "kem");
 
         return super.toNostrEvent(pubkey) as unknown as NostrEvent;
     }

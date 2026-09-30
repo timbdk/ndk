@@ -1,7 +1,7 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
 import { schnorr } from "@noble/curves/secp256k1.js";
-import { generateSecretKey, getPublicKey, nip04, nip19, nip44 } from "nostr-tools";
+import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
 import * as nip49 from "nostr-tools/nip49";
 import { NostrEvent } from "../../events/index.js";
 import { serializeEvent } from "../../events/serializer.js";
@@ -181,36 +181,15 @@ export class NDKPrivateKeySigner implements NDKSigner {
     }
 
     public async encryptionEnabled(scheme?: NDKEncryptionScheme): Promise<NDKEncryptionScheme[]> {
-        const enabled: NDKEncryptionScheme[] = [];
-        if (!scheme || scheme === "nip04") enabled.push("nip04");
-        if (!scheme || scheme === "nip44") enabled.push("nip44");
-        return enabled;
+        return [];
     }
 
     public async encrypt(recipient: NDKUser, value: string, scheme?: NDKEncryptionScheme): Promise<string> {
-        if (!this._privateKey || !this.privateKey) {
-            throw Error("Attempted to encrypt without a private key");
-        }
-
-        const recipientHexPubKey = recipient.pubkey;
-        if (scheme === "nip44") {
-            const conversationKey = nip44.v2.utils.getConversationKey(this._privateKey, recipientHexPubKey);
-            return await nip44.v2.encrypt(value, conversationKey);
-        }
-        return await nip04.encrypt(this._privateKey, recipientHexPubKey, value);
+        throw new Error(`Unsupported encryption scheme '${scheme}': classical encryption disposed, only KEM is supported`);
     }
 
     public async decrypt(sender: NDKUser, value: string, scheme?: NDKEncryptionScheme): Promise<string> {
-        if (!this._privateKey || !this.privateKey) {
-            throw Error("Attempted to decrypt without a private key");
-        }
-
-        const senderHexPubKey = sender.pubkey;
-        if (scheme === "nip44") {
-            const conversationKey = nip44.v2.utils.getConversationKey(this._privateKey, senderHexPubKey);
-            return await nip44.v2.decrypt(value, conversationKey);
-        }
-        return await nip04.decrypt(this._privateKey, senderHexPubKey, value);
+        throw new Error(`Unsupported encryption scheme '${scheme}': classical encryption disposed, only KEM is supported`);
     }
 
     /**

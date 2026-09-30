@@ -316,10 +316,11 @@ describe("NDKNip46Backend", () => {
             // Assert: Verify all standard handlers are registered
             expect(backend.handlers["connect"]).toBeDefined();
             expect(backend.handlers["sign_event"]).toBeDefined();
-            expect(backend.handlers["nip04_encrypt"]).toBeDefined();
-            expect(backend.handlers["nip04_decrypt"]).toBeDefined();
-            expect(backend.handlers["nip44_encrypt"]).toBeDefined();
-            expect(backend.handlers["nip44_decrypt"]).toBeDefined();
+            expect(backend.handlers["kem_decrypt"]).toBeDefined();
+            expect(backend.handlers["nip04_encrypt"]).toBeUndefined();
+            expect(backend.handlers["nip04_decrypt"]).toBeUndefined();
+            expect(backend.handlers["nip44_encrypt"]).toBeUndefined();
+            expect(backend.handlers["nip44_decrypt"]).toBeUndefined();
             expect(backend.handlers["get_public_key"]).toBeDefined();
             expect(backend.handlers["ping"]).toBeDefined();
         });
