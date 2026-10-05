@@ -739,9 +739,6 @@ export class NDKRelayConnectivity {
             const aggressiveDelays = [0, 1000, 2000, 5000, 10000, 30000];
             reconnectDelay = aggressiveDelays[Math.min(attempt, aggressiveDelays.length - 1)];
             this.debug(`Using aggressive reconnect after idle, attempt ${attempt}, delay ${reconnectDelay}ms`);
-        } else if (this.connectedAt) {
-            // Recent disconnection, wait before reconnecting
-            reconnectDelay = Math.max(0, 60000 - (Date.now() - this.connectedAt));
         } else {
             // Standard exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s max
             reconnectDelay = Math.min(1000 * 2 ** attempt, 30000);

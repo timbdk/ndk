@@ -173,12 +173,24 @@ export function calculateRelaySetsFromFilter(
     }
 
     if (result.size === 0) {
-        // If we don't have any relays, add all the permanent relays
-        pool.permanentAndConnectedRelays()
-            .slice(0, 5)
-            .forEach((relay) => {
-                result.set(relay.url, filters);
+        if (ndk.explicitRelayUrls && ndk.explicitRelayUrls.length > 0) {
+            ndk.explicitRelayUrls.forEach((relayUrl) => {
+                result.set(relayUrl, filters);
             });
+        } else {
+            const connected = pool.permanentAndConnectedRelays();
+            if (connected.length > 0) {
+                connected.slice(0, 5).forEach((relay) => {
+                    result.set(relay.url, filters);
+                });
+            } else {
+                Array.from(pool.relays.values())
+                    .slice(0, 5)
+                    .forEach((relay) => {
+                        result.set(relay.url, filters);
+                    });
+            }
+        }
     }
 
     return result;
