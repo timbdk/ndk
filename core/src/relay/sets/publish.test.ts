@@ -90,12 +90,14 @@ describe("NDKRelaySet publish", () => {
 
     it("should handle all failures when requiredRelayCount is not met", async () => {
         // Setup mocks to simulate all failures
-        mockPublish1.mockRejectedValue(new Error("Failed to publish"));
+        mockPublish1.mockRejectedValue(new Error("restricted: [TRUSTED_CONNECTION_REQUIRED]: Kind 30297 requires trusted connection"));
         mockPublish2.mockRejectedValue(new Error("Failed to publish"));
         mockPublish3.mockRejectedValue(new Error("Failed to publish"));
 
         // Set a required count of 2 relays
-        await expect(relaySet.publish(event, 1000, 2)).rejects.toThrow();
+        await expect(relaySet.publish(event, 1000, 2)).rejects.toThrow(
+            /Not enough relays received the event \(0 published, 2 required\): .*wss:\/\/relay1\.example\.com.*TRUSTED_CONNECTION_REQUIRED/,
+        );
         expect(event.publishStatus).toBe("error");
     });
 
